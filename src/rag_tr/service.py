@@ -36,9 +36,12 @@ class RAGService:
         for path in saved_paths:
             try:
                 pages = load_document(path)
-            except ValueError:
+            except Exception:
                 failed.append(path.name)
                 continue
+
+            self.vector_store.delete_by_source(path.name)
+            self.bm25_index.remove_by_source(path.name)
 
             chunks = chunk_text(
                 pages,

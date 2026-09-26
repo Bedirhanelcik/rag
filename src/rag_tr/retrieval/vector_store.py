@@ -26,12 +26,15 @@ class VectorStore:
             for c in chunks
         ]
         documents = [c.text for c in chunks]
-        self._collection.add(
+        self._collection.upsert(
             ids=ids,
             embeddings=np.asarray(embeddings).tolist(),
             metadatas=metadatas,
             documents=documents,
         )
+
+    def delete_by_source(self, source_file: str) -> None:
+        self._collection.delete(where={"source_file": source_file})
 
     def query(self, query_embedding: np.ndarray, top_k: int) -> list[tuple[str, float]]:
         count = self._collection.count()

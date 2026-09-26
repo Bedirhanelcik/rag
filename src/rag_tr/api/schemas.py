@@ -29,3 +29,4 @@ class HealthResponse(BaseModel):
     status: str
     embedding_model: str
     chunk_count: int
+    keyword_index_size: int
