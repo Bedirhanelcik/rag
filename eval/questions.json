@@ -1,0 +1,52 @@
+[
+  {
+    "question": "Türkiye'nin başkenti neresidir?",
+    "expected_answer": "Ankara",
+    "source_file": "turkiye_cografyasi.md"
+  },
+  {
+    "question": "Türkiye kaç coğrafi bölgeye ayrılır?",
+    "expected_answer": "Yedi coğrafi bölgeye ayrılır.",
+    "source_file": "turkiye_cografyasi.md"
+  },
+  {
+    "question": "Türkiye'nin en yüksek dağı nedir ve yüksekliği kaç metredir?",
+    "expected_answer": "Ağrı Dağı, 5137 metre.",
+    "source_file": "turkiye_cografyasi.md"
+  },
+  {
+    "question": "İstanbul'un coğrafi açıdan önemi nedir?",
+    "expected_answer": "Boğaz ile ikiye bölünen, hem Asya hem Avrupa kıtasında toprakları olan tek büyük şehirdir.",
+    "source_file": "turkiye_cografyasi.md"
+  },
+  {
+    "question": "RAG (Retrieval-Augmented Generation) yöntemi ne işe yarar?",
+    "expected_answer": "Dil modelinin cevap üretirken harici bir bilgi kaynağından ilgili bilgileri alıp bağlam olarak kullanmasını sağlar, halüsinasyonu azaltır.",
+    "source_file": "yapay_zeka_temelleri.md"
+  },
+  {
+    "question": "Derin öğrenme nedir?",
+    "expected_answer": "Çok katmanlı yapay sinir ağları kullanan bir makine öğrenmesi yöntemidir.",
+    "source_file": "yapay_zeka_temelleri.md"
+  },
+  {
+    "question": "ChromaDB nedir?",
+    "expected_answer": "Metinlerin embedding'lerini saklayarak anlamsal benzerlik araması yapmaya olanak tanıyan açık kaynaklı bir vektör veritabanıdır.",
+    "source_file": "yapay_zeka_temelleri.md"
+  },
+  {
+    "question": "Osmanlı Devleti'ni kim ve hangi yıl kurmuştur?",
+    "expected_answer": "Osman Bey, 1299 yılında.",
+    "source_file": "osmanli_tarihi.md"
+  },
+  {
+    "question": "İstanbul'u kim fethetmiştir ve hangi yılda?",
+    "expected_answer": "II. Mehmed (Fatih Sultan Mehmed), 1453 yılında.",
+    "source_file": "osmanli_tarihi.md"
+  },
+  {
+    "question": "Osmanlı Devleti en geniş sınırlarına hangi padişah döneminde ulaşmıştır?",
+    "expected_answer": "Kanuni Sultan Süleyman döneminde.",
+    "source_file": "osmanli_tarihi.md"
+  }
+]
