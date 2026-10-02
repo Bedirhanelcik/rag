@@ -79,7 +79,11 @@ async def main() -> int:
     print(f"\ntoplam vaka    : {summary.total}")
     print(f"gecen          : {summary.passed}")
     print(f"basarisiz      : {summary.failed}")
-    print(f"gemini cagrisi : {llm.call_count} (agent) + judge cagrilari")
+    # Gercek istek sayisi: agent'in retry'leri ve judge cagrilari dahil.
+    agent_requests = llm.call_count + llm.retry_count
+    judge_requests = summary.judge_calls
+    print(f"gemini cagrisi : {agent_requests + judge_requests} toplam "
+          f"({agent_requests} agent [{llm.retry_count} retry] + {judge_requests} judge)")
     print(f"token (agent)  : girdi {llm.input_tokens}, cikti {llm.output_tokens}")
     print(f"maliyet        : ${free if free is not None else 0.0:.4f} (free tier)"
           f" | paid tier esdegeri: ${paid:.4f}" if paid is not None else "")

@@ -501,3 +501,123 @@ def test_no_pacing_by_default():
     _run(run_agent_eval(FakeAgent(_answered_result()), cases, sleep=_fake_sleep))
 
     assert slept == []
+
+
+# --- B-1/B-2: judge cagrisi retry korumali ve sayiliyor ---
+
+
+class _RetryableJudgeError(Exception):
+    """promptevals'in call_with_retry'sinin yakaladigi 429 benzeri hata."""
+
+    def __init__(self, code: int = 429) -> None:
+        super().__init__(f"HTTP {code}")
+        self.code = code
+
+
+class FlakyJudgeClient(FakeJudgeClient):
+    """Ilk N denemede hata firlatir, sonra basarili olur."""
+
+    def __init__(self, failures: int, score=5) -> None:
+        super().__init__(score=score)
+        self._failures = failures
+
+    async def generate_content(self, **kwargs):
+        if self._failures:
+            self._failures -= 1
+            self.calls += 1
+            raise _RetryableJudgeError()
+        return await super().generate_content(**kwargs)
+
+
+def _judge_case(threshold=3):
+    return AgentCase(
+        id="judge", question="Soru?", judge=JudgeSpec(rubric="r", threshold=threshold)
+    )
+
+
+def test_judge_call_is_counted():
+    result = _run(
+        evaluate_agent_case(
+            FakeAgent(_answered_result()), _judge_case(), judge_client=FakeJudgeClient()
+        )
+    )
+
+    assert result.passed
+    assert result.judge_calls == 1
+
+
+def test_non_judge_case_counts_no_judge_calls():
+    case = AgentCase(id="plain", question="q", expect_status="answered")
+
+    result = _run(evaluate_agent_case(FakeAgent(_answered_result()), case))
+
+    assert result.judge_calls == 0
+
+
+def test_judge_rate_limit_is_retried_via_promptevals_and_every_attempt_is_counted(monkeypatch):
+    """B-1: tek bir 429, agent dogru calistigi halde vakayi dusurmemeli.
+    B-2: yeniden denemeler de gercek istek oldugu icin sayilmali."""
+    import promptevals.runner as pe_runner
+
+    monkeypatch.setattr(pe_runner.genai_errors, "APIError", _RetryableJudgeError)
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(pe_runner.asyncio, "sleep", _no_sleep)
+
+    judge = FlakyJudgeClient(failures=1)
+    result = _run(
+        evaluate_agent_case(FakeAgent(_answered_result()), _judge_case(), judge_client=judge)
+    )
+
+    assert result.passed, "retry sonrasi basarili judge vakayi gecirmeli"
+    assert result.judge_calls == 2, "ilk deneme + yeniden deneme sayilmali"
+
+
+def test_judge_retries_are_bounded_and_surface_as_a_failed_assertion(monkeypatch):
+    import promptevals.runner as pe_runner
+
+    monkeypatch.setattr(pe_runner.genai_errors, "APIError", _RetryableJudgeError)
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(pe_runner.asyncio, "sleep", _no_sleep)
+
+    judge = FlakyJudgeClient(failures=99)
+    result = _run(
+        evaluate_agent_case(FakeAgent(_answered_result()), _judge_case(), judge_client=judge)
+    )
+
+    assert not result.passed
+    assert result.judge_calls == 4, "1 ilk deneme + 3 yeniden deneme (JUDGE_MAX_RETRIES)"
+    assert result.error is None, "judge hatasi vakayi cokertmemeli, assertion olarak raporlanmali"
+
+
+def test_summary_aggregates_judge_calls_across_cases():
+    cases = [_judge_case(), _judge_case()]
+
+    summary = _run(
+        run_agent_eval(
+            FakeAgent(_answered_result()), cases, judge_client=FakeJudgeClient()
+        )
+    )
+
+    assert summary.judge_calls == 2
+
+
+# --- B-3: belirsiz sorgu vakasi anlamli davranisi olcmeye devam etmeli ---
+
+
+def test_ambiguous_case_keeps_testing_retrieval_without_intent_ambiguity():
+    case = {c.id: c for c in load_suite(SUITE_PATH).cases}["ambiguous_query_refinement"]
+
+    # Niyet belirsizligi kalkmali: tek kelimelik girdi dogrudan-cevap yoluna
+    # dusebiliyordu, bu yuzden soru artik birden fazla kelime iceriyor.
+    assert len(case.question.split()) > 1
+    # Olculen davranis zayiflatilmamali: arama hala zorunlu, iki sonuc da kabul.
+    assert case.expect_tool == "rag_search"
+    assert set(case.expect_status) == {"answered", "insufficient_context"}
+    assert not case.expect_no_tool
+    assert case.answer_not_contains

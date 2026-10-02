@@ -40,10 +40,13 @@ cases:
     answer_regex: '\[osmanli_tarihi\.md::[0-9]+\]'
     answer_contains: ["1299"]
 
-  # 5. Belirsiz sorgu: agent ya yeniden formulleyip tekrar arar ya da yetersiz
-  #    baglam bildirir -- her iki davranis da kabul edilebilir, uydurma degil.
+  # 5. Eksik belirtilmis ama niyeti belli olgusal sorgu: agent ya yeniden
+  #    formulleyip tekrar arar ya da yetersiz baglam bildirir -- her iki davranis
+  #    da kabul edilebilir, uydurma degil. Tek kelimelik "bölge" yerine aramayi
+  #    gerektirdigi acik bir ifade kullaniliyor; aksi halde "bu zaten soru mu?"
+  #    belirsizligi yuzunden vaka dogrudan-cevap yoluna da dusebiliyordu.
   - id: ambiguous_query_refinement
-    question: "bölge"
+    question: "Türkiye'nin bölgeleri"
     expect_status: [answered, insufficient_context]
     expect_tool: rag_search
     answer_not_contains: ["bilmiyorum ama sanırım"]

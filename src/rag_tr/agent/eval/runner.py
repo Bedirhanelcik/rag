@@ -13,10 +13,16 @@ from typing import Callable
 from promptevals.assertions import SYNC_CHECKERS
 from promptevals.judge import run_llm_judge
 from promptevals.models import AssertionResult
+from promptevals.runner import call_with_retry
 
 from rag_tr.agent.contracts import AgentResult
 from rag_tr.agent.eval.cases import AgentCase, compile_assertions
 from rag_tr.agent.eval.observation import render_observation
+
+# Judge cagrisi da ayni free tier kotasini kullanir; agent cagrilari gibi
+# korunmasi gerekiyor, aksi halde tek bir 429 agent dogru calistigi halde
+# vakayi dusurur.
+JUDGE_MAX_RETRIES = 3
 
 
 @dataclass
@@ -28,6 +34,7 @@ class AgentCaseResult:
     assertion_results: list[AssertionResult]
     latency_ms: float
     llm_calls: int | None = None
+    judge_calls: int = 0
     error: str | None = None
 
     @property
@@ -54,6 +61,11 @@ class AgentEvalSummary:
     @property
     def avg_latency_ms(self) -> float:
         return sum(r.latency_ms for r in self.results) / self.total if self.total else 0.0
+
+    @property
+    def judge_calls(self) -> int:
+        """Judge icin yapilan gercek istek sayisi (yeniden denemeler dahil)."""
+        return sum(r.judge_calls for r in self.results)
 
 
 async def evaluate_agent_case(
@@ -90,14 +102,21 @@ async def evaluate_agent_case(
     targets = {"observation": observation, "answer": result.answer}
 
     assertion_results: list[AssertionResult] = []
+    judge_calls = 0
     for compiled in compile_assertions(case):
         assertion = compiled.assertion
         output = targets[compiled.target]
         try:
             if assertion.type == "llm_judge":
                 # Anthropic client'i verilmez: degerlendirme Gemini free tier
-                # uzerinden calisir.
-                check = await run_llm_judge(None, judge_client, assertion, output)
+                # uzerinden calisir. promptevals'in mevcut call_with_retry'si
+                # kullanilir -- yeni bir retry mekanizmasi yazilmaz.
+                def _judge_attempt():
+                    nonlocal judge_calls
+                    judge_calls += 1  # her deneme gercek bir istektir
+                    return run_llm_judge(None, judge_client, assertion, output)
+
+                check = await call_with_retry(_judge_attempt, JUDGE_MAX_RETRIES)
             else:
                 check = SYNC_CHECKERS[assertion.type](assertion, output)
         except Exception as exc:  # noqa: BLE001 - basarisiz assertion olarak raporlanir
@@ -114,6 +133,7 @@ async def evaluate_agent_case(
         assertion_results=assertion_results,
         latency_ms=latency_ms,
         llm_calls=(call_count() - calls_before) if calls_before is not None else None,
+        judge_calls=judge_calls,
     )
 
 
