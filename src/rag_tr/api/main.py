@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from rag_tr.api.agent_routes import router as agent_router
 from rag_tr.api.routes import router
 from rag_tr.config import Settings
 from rag_tr.service import RAGService
@@ -17,10 +18,16 @@ def build_service() -> RAGService:
     return RAGService(settings)
 
 
-def create_app(service: RAGService | None = None) -> FastAPI:
+def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
+    """`agent` verilirse app.state'e yerlestirilir (testler fake enjekte eder);
+    verilmezse ilk /agent/ask isteginde tembel olarak kurulur, boylece RAG-only
+    dagitim Gemini key'i olmadan da calismaya devam eder."""
     app = FastAPI(title="Türkçe RAG API")
     app.state.service = service if service is not None else build_service()
+    app.state.agent = agent
+    app.state.agent_factory = None
     app.include_router(router)
+    app.include_router(agent_router)
     return app
 
 

@@ -4,7 +4,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    anthropic_api_key: str
+    # Bos varsayilan: agent-only dagitimda (yalnizca Gemini) anlamsiz bir dummy
+    # sir tutmak gerekmesin. Claude yolu (/query) bu key ile cagri yapar;
+    # bos birakilirsa yalnizca o cagri sirasinda kimlik hatasi alinir.
+    anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     embedding_model_name: str = "intfloat/multilingual-e5-small"
     chroma_persist_dir: str = "data/chroma"

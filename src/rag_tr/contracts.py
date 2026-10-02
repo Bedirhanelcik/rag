@@ -54,6 +54,9 @@ class ErrorCode(str, Enum):
 
     RETRIEVAL_ERROR = "retrieval_error"
     GENERATION_ERROR = "generation_error"
+    # Agent HTTP katmani icin: kota tukenmesi "bozuk sistem" ile karistirilmamali.
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    AGENT_UNAVAILABLE = "agent_unavailable"
     INVALID_FILENAME = "invalid_filename"
     UNSUPPORTED_FILE_TYPE = "unsupported_file_type"
 
