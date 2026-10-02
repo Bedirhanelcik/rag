@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from rag_tr.api.agent_routes import router as agent_router
 from rag_tr.api.routes import router
+from rag_tr.api.upload_routes import router as upload_router
 from rag_tr.config import Settings
 from rag_tr.service import RAGService
 
@@ -28,6 +29,7 @@ def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     app.state.agent_factory = None
     app.include_router(router)
     app.include_router(agent_router)
+    app.include_router(upload_router)
     return app
 
 

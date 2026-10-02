@@ -59,6 +59,9 @@ class ErrorCode(str, Enum):
     AGENT_UNAVAILABLE = "agent_unavailable"
     INVALID_FILENAME = "invalid_filename"
     UNSUPPORTED_FILE_TYPE = "unsupported_file_type"
+    # Upload uc noktasi icin.
+    UPLOAD_DISABLED = "upload_disabled"
+    FILE_TOO_LARGE = "file_too_large"
 
 
 class RetrievalError(RuntimeError):

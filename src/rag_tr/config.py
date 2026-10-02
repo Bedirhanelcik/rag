@@ -17,3 +17,8 @@ class Settings(BaseSettings):
     top_k_keyword: int = 10
     top_k_final: int = 5
     rrf_k: int = 60
+    # Upload varsayilan olarak KAPALI: mevcut Chroma koleksiyonu tum ziyaretciler
+    # arasinda paylasimli, yani kullanici izolasyonu yok. Yerel gelistirmede
+    # UPLOAD_ENABLED=true ile acilir; dagitimda kapali kalmali.
+    upload_enabled: bool = False
+    upload_max_bytes: int = 10 * 1024 * 1024
