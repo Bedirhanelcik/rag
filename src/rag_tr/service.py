@@ -21,12 +21,22 @@ class IngestResult:
 
 
 class RAGService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        embedding_model: EmbeddingModel | None = None,
+        vector_store: VectorStore | None = None,
+        bm25_index: BM25Index | None = None,
+        client: anthropic.Anthropic | None = None,
+    ) -> None:
+        """Bagimliliklar test edilebilirlik icin enjekte edilebilir; verilmezse
+        uretim davranisi aynen korunur (gercek model, kalici store, gercek client)."""
         self.settings = settings
-        self.embedding_model = EmbeddingModel(settings.embedding_model_name)
-        self.vector_store = VectorStore(settings.chroma_persist_dir)
-        self.bm25_index = BM25Index()
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.embedding_model = embedding_model or EmbeddingModel(settings.embedding_model_name)
+        self.vector_store = vector_store or VectorStore(settings.chroma_persist_dir)
+        self.bm25_index = bm25_index or BM25Index()
+        self.client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     def ingest_files(self, saved_paths: list[Path]) -> IngestResult:
         ingested: list[str] = []

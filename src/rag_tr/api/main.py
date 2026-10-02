@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -7,14 +8,28 @@ from rag_tr.config import Settings
 from rag_tr.service import RAGService
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="Türkçe RAG API")
+def build_service() -> RAGService:
+    """Uretim servisini kurar: .env okur, kalici dizinleri olusturur, gercek
+    embedding modelini ve Anthropic client'ini yaratir."""
     settings = Settings()
     Path(settings.chroma_persist_dir).mkdir(parents=True, exist_ok=True)
     Path("data/uploads").mkdir(parents=True, exist_ok=True)
-    app.state.service = RAGService(settings)
+    return RAGService(settings)
+
+
+def create_app(service: RAGService | None = None) -> FastAPI:
+    app = FastAPI(title="Türkçe RAG API")
+    app.state.service = service if service is not None else build_service()
     app.include_router(router)
     return app
 
 
-app = create_app()
+def __getattr__(name: str) -> Any:
+    """`uvicorn rag_tr.api.main:app` komutunu korur ama uygulamayi yalnizca
+    gercekten istendiginde kurar; modulu import etmek (ornegin testlerde) artik
+    .env, embedding model indirmesi veya API key gerektirmiyor."""
+    if name == "app":
+        app = create_app()
+        globals()["app"] = app
+        return app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
