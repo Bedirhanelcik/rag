@@ -25,12 +25,25 @@ class BM25Index:
         """Lock tutulurken cagrilir."""
         self._bm25 = BM25Okapi(list(self._tokenized)) if self._tokenized else None
 
+    def _add_locked(self, chunks: list[Chunk]) -> None:
+        for chunk in chunks:
+            self._chunk_ids.append(make_chunk_id(chunk.source_file, chunk.chunk_index))
+            self._chunks.append(chunk)
+            self._tokenized.append(_tokenize(chunk.text))
+
     def add(self, chunks: list[Chunk]) -> None:
         with self._lock:
-            for chunk in chunks:
-                self._chunk_ids.append(make_chunk_id(chunk.source_file, chunk.chunk_index))
-                self._chunks.append(chunk)
-                self._tokenized.append(_tokenize(chunk.text))
+            self._add_locked(chunks)
+            self._rebuild()
+
+    def replace_all(self, chunks: list[Chunk]) -> None:
+        """Corpus'u tek bir atomik adimda verilen chunk listesiyle degistirir.
+        Yeniden baslatma sonrasi index'i vektor deposundan kurarken kullanilir."""
+        with self._lock:
+            self._chunk_ids = []
+            self._chunks = []
+            self._tokenized = []
+            self._add_locked(chunks)
             self._rebuild()
 
     def remove_by_source(self, source_file: str) -> None:

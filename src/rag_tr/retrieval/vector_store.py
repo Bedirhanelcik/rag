@@ -65,3 +65,18 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
+
+    def all_chunks(self) -> list[Chunk]:
+        """Kalici koleksiyondaki tum chunk'lari dondurur. BM25 index'i yeniden
+        kurmak icin kullanilir: metin ve metadata zaten burada sakli oldugundan
+        ayri bir kalicilik katmanina gerek kalmiyor."""
+        result = self._collection.get(include=["documents", "metadatas"])
+        return [
+            Chunk(
+                text=doc,
+                source_file=meta["source_file"],
+                page_number=None if meta["page_number"] == -1 else meta["page_number"],
+                chunk_index=meta["chunk_index"],
+            )
+            for doc, meta in zip(result["documents"], result["metadatas"])
+        ]

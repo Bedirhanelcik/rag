@@ -37,6 +37,19 @@ class RAGService:
         self.vector_store = vector_store or VectorStore(settings.chroma_persist_dir)
         self.bm25_index = bm25_index or BM25Index()
         self.client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.rebuild_keyword_index()
+
+    def rebuild_keyword_index(self) -> int:
+        """BM25 index'i kalici vektor deposundan yeniden kurar.
+
+        BM25 yalnizca bellekte yasiyor; ChromaDB ise chunk metinlerini ve
+        metadata'sini diskte tutuyor. Servis her ayaga kalktiginda index'i o
+        kalici veriden uretmek, hem yeniden baslatma sonrasi keyword aramasinin
+        sessizce devre disi kalmasini onler hem de iki depo arasinda tutarsizlik
+        birakmaz: tek kaynak-of-truth vektor deposudur."""
+        chunks = self.vector_store.all_chunks()
+        self.bm25_index.replace_all(chunks)
+        return len(chunks)
 
     def ingest_files(self, saved_paths: list[Path]) -> IngestResult:
         ingested: list[str] = []

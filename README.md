@@ -19,7 +19,7 @@ graph TD
         L --> C["chunker.py<br/>chunk_text<br/>(chunk_size=1000, overlap=150)"]
         C --> E["EmbeddingModel<br/>(intfloat/multilingual-e5-small)"]
         E --> VS["VectorStore<br/>(ChromaDB)"]
-        C --> BM["BM25Index<br/>(rank-bm25, bellekte)"]
+        C --> BM["BM25Index<br/>(rank-bm25, bellekte;<br/>açılışta Chroma'dan kurulur)"]
     end
 
     subgraph Retrieval["Retrieval"]
@@ -201,7 +201,7 @@ Vektör aramasının döndürdüğü skorlar (cosine similarity, genelde 0-1 ara
 
 - **Reranker modeli eklenmesi:** RRF ile birleştirilen ilk sonuçların üzerine, cross-encoder tabanlı bir reranker (örn. bir Türkçe/çok dilli cross-encoder modeli) uygulanarak `top_k_final` öncesi sonuçların isabet oranı artırılabilir.
 - **Streaming yanıt:** Claude API'nin streaming modu kullanılarak `/query` uç noktası token token yanıt döndürebilir, Streamlit arayüzü de yanıtı üretilirken gösterebilir (şu anda `generate_answer` tam yanıtı tek seferde bekliyor).
-- **BM25 index'inin diske kalıcı serialize edilmesi:** Şu anda `BM25Index` yalnızca bellekte tutuluyor (`RAGService.__init__` içinde her API yeniden başlatıldığında sıfırdan oluşuyor); ChromaDB gibi diske kalıcı bir yapıya (örn. pickle veya özel bir dosya formatı) serialize edilirse, API yeniden başlatıldığında yüklenen dokümanların anahtar kelime index'i kaybolmaz.
+- **BM25 yeniden kurma maliyetinin azaltılması:** `BM25Index` bellekte yaşıyor ama artık restart sonrası kaybolmuyor: `RAGService.rebuild_keyword_index()` açılışta index'i ChromaDB'deki kalıcı chunk metinlerinden yeniden kuruyor (tek kaynak-of-truth vektör deposu, dolayısıyla iki depo arasında tutarsızlık oluşmuyor). Çok büyük corpus'larda bu yeniden kurma açılış süresini uzatabilir; o noktada tokenize edilmiş corpus'un diske cache'lenmesi düşünülebilir.
 - **Çoklu kullanıcı/oturum desteği:** Şu anda tüm kullanıcılar aynı `VectorStore`/`BM25Index`'i paylaşıyor; kullanıcı/oturum bazlı koleksiyon ayrımı (örn. Chroma'da kullanıcı başına ayrı koleksiyon) eklenerek farklı kullanıcıların dokümanları birbirinden izole edilebilir.
 - **Semantic caching:** Sık sorulan veya anlamsal olarak birbirine çok yakın sorular için, embedding benzerliğine dayalı bir önbellek eklenerek hem Claude API maliyeti hem de yanıt süresi azaltılabilir.
 - **Değerlendirme otomasyonu:** `eval/questions.json` içindeki soru-cevap çiftleri kullanılarak, `/query` uç noktasının ürettiği yanıtların beklenen yanıtlarla otomatik karşılaştırıldığı bir eval script'i (örn. cevap içinde beklenen anahtar bilgilerin geçip geçmediğini kontrol eden veya bir LLM-judge kullanan) yazılabilir; bu script CI'a bağlanarak regresyonlar erken yakalanabilir.

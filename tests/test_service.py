@@ -125,3 +125,53 @@ def test_hybrid_retrieval_uses_both_vector_and_keyword_paths(
     context = fake_client.calls[0]["messages"][0]["content"]
     assert "Bağlam:" in context
     assert "cografya.md" in context
+
+
+def test_keyword_index_survives_a_service_restart(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    """ChromaDB kalici oldugu halde BM25 bellekte yasiyor; yeni bir servis
+    ornegi ayni dizinden kalkarken keyword index'i yeniden kurmali."""
+    path = _write(tmp_path, "cografya.md", DOC)
+    first = _service(settings, fake_embedding_model, fake_client)
+    ingest = first.ingest_files([path])
+    assert ingest.chunk_count > 0
+    del first
+
+    # Ayni kalici dizin, tamamen yeni servis + bos bir BM25Index.
+    restarted = _service(settings, fake_embedding_model, fake_client, bm25=BM25Index())
+
+    assert restarted.vector_store.count() == ingest.chunk_count
+    assert restarted.bm25_index.size() == ingest.chunk_count, "BM25 restart sonrasi bos kaldi"
+    assert restarted.bm25_index.query("ankara", 10), "keyword aramasi restart sonrasi calismiyor"
+
+    result = restarted.query("Türkiye'nin başkenti neresidir?", top_k=3)
+    assert result.used_chunk_ids
+    assert result.answer == "Cevap burada [1]."
+
+
+def test_restart_rebuild_does_not_duplicate_or_diverge(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    path = _write(tmp_path, "cografya.md", DOC)
+    service = _service(settings, fake_embedding_model, fake_client)
+    ingest = service.ingest_files([path])
+
+    # Ayni servis uzerinde iki kez yeniden kurmak corpus'u cogaltmamali.
+    service.rebuild_keyword_index()
+    service.rebuild_keyword_index()
+
+    assert service.bm25_index.size() == ingest.chunk_count
+    assert service.vector_store.count() == service.bm25_index.size()
+    ids = set(service.bm25_index._chunk_ids)
+    assert len(ids) == ingest.chunk_count, "tekrarlanan chunk id uretildi"
+
+
+def test_empty_persistent_store_rebuilds_to_empty_index(
+    settings, fake_embedding_model, fake_client
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+
+    assert service.rebuild_keyword_index() == 0
+    assert service.bm25_index.size() == 0
+    assert service.bm25_index.query("herhangi", 5) == []
