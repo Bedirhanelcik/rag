@@ -36,13 +36,22 @@ class VectorStore:
     def delete_by_source(self, source_file: str) -> None:
         self._collection.delete(where={"source_file": source_file})
 
-    def query(self, query_embedding: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+    def query(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int,
+        source_file: str | None = None,
+    ) -> list[tuple[str, float]]:
         count = self._collection.count()
         if count == 0:
             return []
+        # Filtre Chroma'ya birakiliyor; boylece top_k filtrelenmis kume
+        # uzerinden uygulanir, sonradan kirpilmis bir listeden degil.
+        where = {"source_file": source_file} if source_file is not None else None
         result = self._collection.query(
             query_embeddings=[np.asarray(query_embedding).tolist()],
             n_results=min(top_k, count),
+            where=where,
         )
         ids = result["ids"][0]
         distances = result["distances"][0]

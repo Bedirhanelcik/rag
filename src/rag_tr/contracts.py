@@ -5,6 +5,7 @@ durumunu bir hatadan, retrieval hatasini da generation (Claude) hatasindan
 serbest metne bakmadan ayirt edebilmeli. Bu modul o ayrimi tek yerde tanimlar.
 """
 
+from dataclasses import dataclass, field
 from enum import Enum
 
 NO_CONTEXT_MESSAGE = "Dokümanlarda bu bilgi yok."
@@ -15,6 +16,37 @@ class QueryStatus(str, Enum):
 
     ANSWERED = "answered"
     NO_RELEVANT_CONTEXT = "no_relevant_context"
+
+
+class RetrievalStatus(str, Enum):
+    """Generation yapilmadan donen retrieval sonucunun durumu."""
+
+    FOUND = "found"
+    # "dokumanda yok" durumu generation yolundakiyle ayni string degeri tasir,
+    # boylece agent tarafinda tek bir dal yeterli olur.
+    NO_RELEVANT_CONTEXT = "no_relevant_context"
+
+
+@dataclass(frozen=True)
+class Passage:
+    """Agent'a donen tek bir retrieval sonucu.
+
+    VectorStore/BM25Index/EmbeddingModel detaylarini disa acmaz; `chunk_id`
+    deterministiktir (`source_file::chunk_index`) ve atif/yeniden-getirme
+    anahtari olarak kullanilabilir."""
+
+    chunk_id: str
+    source_file: str
+    page_number: int | None
+    text: str
+    rank: int
+    score: float
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    status: RetrievalStatus
+    passages: list[Passage] = field(default_factory=list)
 
 
 class ErrorCode(str, Enum):

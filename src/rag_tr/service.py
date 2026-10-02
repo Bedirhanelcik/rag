@@ -4,14 +4,20 @@ from pathlib import Path
 import anthropic
 
 from rag_tr.config import Settings
-from rag_tr.contracts import GenerationError, RetrievalError
+from rag_tr.contracts import (
+    GenerationError,
+    Passage,
+    RetrievalError,
+    RetrievalResult,
+    RetrievalStatus,
+)
 from rag_tr.generation.answerer import AnswerResult, generate_answer, no_context_result
-from rag_tr.ingestion.chunker import chunk_text
+from rag_tr.ingestion.chunker import Chunk, chunk_text
 from rag_tr.ingestion.loaders import load_document
 from rag_tr.retrieval.embeddings import EmbeddingModel
 from rag_tr.retrieval.hybrid import reciprocal_rank_fusion
 from rag_tr.retrieval.keyword_search import BM25Index
-from rag_tr.retrieval.vector_store import VectorStore
+from rag_tr.retrieval.vector_store import VectorStore, make_chunk_id
 
 
 @dataclass
@@ -82,30 +88,71 @@ class RAGService:
 
         return IngestResult(ingested_files=ingested, failed_files=failed, chunk_count=total_chunks)
 
-    def query(self, question: str, top_k: int) -> AnswerResult:
-        """Retrieval ve generation hatalarini ayri tiplere sararak yukari tasir;
-        boylece API katmani (ve onu tool olarak cagiran agent) hangi asamanin
-        basarisiz oldugunu serbest metne bakmadan ayirt edebilir."""
+    def _retrieve_chunks(
+        self, question: str, top_k: int, source_file: str | None = None
+    ) -> list[tuple[Chunk, float]]:
+        """Hibrit retrieval'in tek implementasyonu: embedding -> vektor arama +
+        BM25 -> RRF. Claude cagrilmaz. Hem retrieve() hem query() bunu kullanir,
+        boylece iki yolun sonuclari hicbir zaman ayrismaz."""
         try:
             if self.vector_store.count() == 0:
-                return no_context_result()
+                return []
 
             query_embedding = self.embedding_model.encode_query(question)
-            vector_results = self.vector_store.query(query_embedding, self.settings.top_k_vector)
-            keyword_results = self.bm25_index.query(question, self.settings.top_k_keyword)
+            vector_results = self.vector_store.query(
+                query_embedding, self.settings.top_k_vector, source_file=source_file
+            )
+            keyword_results = self.bm25_index.query(
+                question, self.settings.top_k_keyword, source_file=source_file
+            )
             fused = reciprocal_rank_fusion(vector_results, keyword_results, k=self.settings.rrf_k)
-            top_ids = [chunk_id for chunk_id, _ in fused[:top_k]]
+            top = fused[:top_k]
+            if not top:
+                return []
 
-            if not top_ids:
-                return no_context_result()
-
-            chunks = self.vector_store.get_chunks(top_ids)
+            by_id = {
+                make_chunk_id(c.source_file, c.chunk_index): c
+                for c in self.vector_store.get_chunks([chunk_id for chunk_id, _ in top])
+            }
         except Exception as exc:
             raise RetrievalError(str(exc)) from exc
 
-        if not chunks:
+        return [(by_id[chunk_id], score) for chunk_id, score in top if chunk_id in by_id]
+
+    def retrieve(
+        self, question: str, top_k: int = 5, source_file: str | None = None
+    ) -> RetrievalResult:
+        """Generation yapmadan yalnizca ilgili pasajlari dondurur (agent tool'u).
+
+        `source_file` verilirse arama yalnizca o dosyanin chunk'lari uzerinde
+        yapilir. Claude/Anthropic API cagrilmaz."""
+        scored = self._retrieve_chunks(question, top_k, source_file)
+        if not scored:
+            return RetrievalResult(status=RetrievalStatus.NO_RELEVANT_CONTEXT, passages=[])
+
+        passages = [
+            Passage(
+                chunk_id=make_chunk_id(chunk.source_file, chunk.chunk_index),
+                source_file=chunk.source_file,
+                page_number=chunk.page_number,
+                text=chunk.text,
+                rank=rank,
+                score=float(score),
+            )
+            for rank, (chunk, score) in enumerate(scored, start=1)
+        ]
+        return RetrievalResult(status=RetrievalStatus.FOUND, passages=passages)
+
+    def query(self, question: str, top_k: int) -> AnswerResult:
+        """Retrieval + Claude generation. Retrieval ve generation hatalarini ayri
+        tiplere sararak yukari tasir; boylece API katmani (ve onu tool olarak
+        cagiran agent) hangi asamanin basarisiz oldugunu serbest metne bakmadan
+        ayirt edebilir."""
+        scored = self._retrieve_chunks(question, top_k)
+        if not scored:
             return no_context_result()
 
+        chunks = [chunk for chunk, _score in scored]
         try:
             return generate_answer(question, chunks, self.client, self.settings.anthropic_model)
         except Exception as exc:

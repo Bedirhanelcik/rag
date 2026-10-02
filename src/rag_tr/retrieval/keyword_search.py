@@ -65,7 +65,9 @@ class BM25Index:
         with self._lock:
             return len(self._chunk_ids)
 
-    def query(self, text: str, top_k: int) -> list[tuple[str, float]]:
+    def query(
+        self, text: str, top_k: int, source_file: str | None = None
+    ) -> list[tuple[str, float]]:
         tokens = _tokenize(text)
         query_tokens = set(tokens)
         if not query_tokens:
@@ -83,8 +85,11 @@ class BM25Index:
             # mutlak skor degeri degil, sadece siralama onemli.
             candidates = [
                 (chunk_id, float(score))
-                for chunk_id, score, chunk_tokens in zip(self._chunk_ids, scores, self._tokenized)
+                for chunk_id, score, chunk, chunk_tokens in zip(
+                    self._chunk_ids, scores, self._chunks, self._tokenized
+                )
                 if query_tokens & set(chunk_tokens)
+                and (source_file is None or chunk.source_file == source_file)
             ]
 
         candidates.sort(key=lambda item: item[1], reverse=True)

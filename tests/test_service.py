@@ -12,6 +12,7 @@ from rag_tr.contracts import (
     GenerationError,
     QueryStatus,
     RetrievalError,
+    RetrievalStatus,
 )
 from rag_tr.retrieval.keyword_search import BM25Index
 from rag_tr.retrieval.vector_store import VectorStore
@@ -248,3 +249,125 @@ def test_retrieval_failure_surfaces_as_retrieval_error(
 
     with pytest.raises(RetrievalError):
         service.query("Başkent neresi?", top_k=3)
+
+
+# --- retrieval-only (agent tool) ---
+
+
+def test_retrieve_returns_passages_without_calling_claude(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    result = service.retrieve("Türkiye'nin başkenti neresidir?")
+
+    assert result.status is RetrievalStatus.FOUND
+    assert result.passages
+    assert fake_client.calls == [], "retrieve() Claude'u cagirmamali"
+
+
+def test_retrieve_passage_fields_are_populated_and_ranked(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    passages = service.retrieve("Türkiye bölgeleri ve başkenti", top_k=3).passages
+
+    assert [p.rank for p in passages] == list(range(1, len(passages) + 1))
+    scores = [p.score for p in passages]
+    assert scores == sorted(scores, reverse=True)
+    for p in passages:
+        assert p.chunk_id.startswith("cografya.md::")
+        assert p.source_file == "cografya.md"
+        assert p.page_number is None
+        assert p.text.strip()
+        assert isinstance(p.score, float)
+
+
+def test_retrieve_respects_top_k(settings, fake_embedding_model, fake_client, tmp_path):
+    settings.chunk_size = 60
+    settings.chunk_overlap = 10
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+    assert service.vector_store.count() > 2
+
+    assert len(service.retrieve("Türkiye", top_k=1).passages) == 1
+    assert len(service.retrieve("Türkiye", top_k=2).passages) <= 2
+
+
+def test_retrieve_can_be_scoped_to_a_single_source_file(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files(
+        [
+            _write(tmp_path, "cografya.md", DOC),
+            _write(tmp_path, "tarih.md", "Osmanlı Devleti 1299 yılında Osman Bey tarafından kuruldu."),
+        ]
+    )
+
+    scoped = service.retrieve("Osmanlı hangi yıl kuruldu?", top_k=5, source_file="tarih.md")
+
+    assert scoped.status is RetrievalStatus.FOUND
+    assert scoped.passages
+    assert {p.source_file for p in scoped.passages} == {"tarih.md"}
+
+
+def test_retrieve_with_unknown_source_file_reports_no_relevant_context(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    result = service.retrieve("Başkent?", source_file="olmayan.md")
+
+    assert result.status is RetrievalStatus.NO_RELEVANT_CONTEXT
+    assert result.passages == []
+
+
+def test_retrieve_on_empty_corpus_reports_no_relevant_context(
+    settings, fake_embedding_model, fake_client
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+
+    result = service.retrieve("Herhangi bir soru?")
+
+    assert result.status is RetrievalStatus.NO_RELEVANT_CONTEXT
+    assert result.passages == []
+    assert fake_client.calls == []
+
+
+def test_retrieve_failure_surfaces_as_retrieval_error(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    def _boom(_text):
+        raise RuntimeError("embedding patladi")
+
+    service.embedding_model.encode_query = _boom
+
+    with pytest.raises(RetrievalError):
+        service.retrieve("Başkent?")
+
+
+def test_query_and_retrieve_agree_on_the_same_chunks(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    """query() ile retrieve() ayni retrieval mantigini paylasmali."""
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    retrieved = service.retrieve("Türkiye'nin başkenti neresidir?", top_k=3)
+    answered = service.query("Türkiye'nin başkenti neresidir?", top_k=3)
+
+    assert [p.chunk_id for p in retrieved.passages] == answered.used_chunk_ids
+
+
+def test_retrieve_default_top_k_is_five(settings, fake_embedding_model, fake_client):
+    import inspect
+
+    assert inspect.signature(RAGService.retrieve).parameters["top_k"].default == 5
