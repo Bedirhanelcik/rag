@@ -227,6 +227,17 @@ Kullanıcı sorusu → Agent → (karar) → RAG retrieval → gerekçeli cevap 
 
 **Promptevals** (ayrı proje, `../LLM`) agent'ın *davranışını* ölçer. Amaç "agent'ı yaptım" değil, "davranışını ölçtüm" diyebilmektir: `eval/agent_suite.yaml` içindeki her vaka tek bir string eşleşmesi yerine gözlemlenebilir davranışı denetler — hangi status döndü, RAG gerçekten çağrıldı mı, gereksiz arama yapıldı mı, doğru kaynak gösterildi mi, atıf formatı doğru mu, korpus dışı soruda uydurma yapıldı mı. Kontrolleri promptevals'ın kendi assertion checker'ları yapar; burada hiçbir evaluator mantığı tekrar yazılmaz ve promptevals RAG'ın içini bilmez — kendisine yalnızca gözlemlenebilir metin gider. Vakaların çoğu deterministik ve ücretsizdir; LLM judge yalnızca gerçekten anlamsal değerlendirme gereken tek vakada kullanılır.
 
+### Demo fixture'ları
+
+`demo/fixtures.json`, daha önce gerçekten çalıştırılmış agent koşularından türetilmiş beş örnek kayıt tutar. Amacı, web arayüzünün Gemini kotası harcamadan gerçek agent davranışını (karar izi, retrieval, atıflar, yetersiz bağlam reddi) gösterebilmesidir — Gemini free tier dakikada 5 ve günlük sınırlı istek verdiği için her ziyaretçinin canlı çağrı yapması mümkün değil.
+
+Bu dosya **canlı bir sonuç değildir** ve öyle sunulmamalıdır. Dosya seviyesinde `mode: "demo"`, her kayıtta ise `synthetic` alanı bulunur:
+
+- `synthetic: false` (4 kayıt) — gerçek koşulardan türetilmiştir. `provenance` alanı hangi alanların doğrudan gözlemlendiğini, hangilerinin agent'ın deterministik çıktı biçiminden yeniden kurulduğunu listeler.
+- `synthetic: true` (1 kayıt, `synthetic_query_refinement`) — **elle kurgulanmıştır, hiç çalıştırılmamıştır.** Yalnızca başarılı sorgu yenileme akışını (ilk arama yetersiz → sorgu yeniden formülleme → ikinci arama → cevap) göstermek için vardır.
+
+Fixture gövdesi `/agent/ask` yanıtının şemasıyla aynıdır (`src/rag_tr/demo.py` doğrulama katmanı P0 şemalarını yeniden kullanır), böylece arayüz demo ve canlı veriyi tek bir yolla render eder. Şema `extra="forbid"` ile tanımlıdır; düşünce zinciri veya başka gizli bir alan dosyaya sessizce giremez.
+
 ```bash
 # Agent'ı tek soruyla canlı denemek (Gemini free tier)
 uv run --no-editable python scripts/agent_smoke.py

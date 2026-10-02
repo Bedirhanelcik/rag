@@ -1,0 +1,288 @@
+{
+  "mode": "demo",
+  "note": "Hazırlanmış örnek agent koşuları. Bu dosya canlı bir sonuç DEĞİLDİR: web arayüzü Gemini kotası harcamadan gerçek agent davranışını gösterebilsin diye saklanır. synthetic=false olan kayıtlar daha önce gerçekten çalıştırılmış koşulardan türetilmiştir; synthetic=true olan kayıt elle kurgulanmıştır ve hiç çalıştırılmamıştır. Her kaydın provenance alanı hangi alanların gözlemlendiğini, hangilerinin agent'ın deterministik biçiminden yeniden kurulduğunu söyler.",
+  "fixtures": [
+    {
+      "id": "factual_rag_answer",
+      "question": "Türkiye'nin en yüksek dağı hangisidir ve yüksekliği kaç metredir?",
+      "synthetic": false,
+      "provenance": {
+        "source": "live_smoke_test",
+        "note": "scripts/agent_smoke.py canlı koşusu, gemini-2.5-flash, 3 LLM çağrısı. Cevap, trace, kaynaklar, rank ve skorlar terminal çıktısından birebir alınmıştır.",
+        "reconstructed_fields": []
+      },
+      "answer": "Türkiye'nin en yüksek dağı Ağrı Dağı'dır ve yüksekliği 5137 metredir [turkiye_cografyasi.md::0].",
+      "status": "answered",
+      "sources": [
+        {
+          "chunk_id": "turkiye_cografyasi.md::0",
+          "source_file": "turkiye_cografyasi.md",
+          "page_number": null,
+          "text": "# Türkiye'nin Coğrafyası Türkiye, Asya ve Avrupa kıtaları arasında köprü konumunda yer alan bir ülkedir. Topraklarının büyük bölümü Anadolu yarımadasında, küçük bir bölümü ise Balkan yarımadasının uzantısı olan Trakya'dadır. Türkiye'nin başkenti Ankara'dır ve ülkenin en büyük şehri İstanbul'dur. Türkiye yedi coğrafi bölgeye ayrılır: Marmara, Ege, Akdeniz, İç Anadolu, Karadeniz, Doğu Anadolu ve Güneydoğu Anadolu. Bu bölgeler iklim, bitki örtüsü ve ekonomik faaliyetler açısından birbirinden farklılık gösterir. Türkiye'nin en yüksek dağı, Doğu Anadolu Bölgesi'nde bulunan Ağrı Dağı'dır ve yüksekliği 5137 metredir. Ülkenin en uzun nehri Kızılırmak'tır. Türkiye'yi çevreleyen dört deniz vardır: Karadeniz, Ege Denizi, Akdeniz ve Marmara Denizi. İstanbul, Boğaz ile ikiye bölünen ve hem Asya hem Avrupa kıtasında toprakları olan tek büyük şehirdir. Bu özelliğiyle dünyada kıtalar arası konuma sahip nadir şehirlerden biridir.",
+          "rank": 1,
+          "score": 0.0328
+        },
+        {
+          "chunk_id": "osmanli_tarihi.md::0",
+          "source_file": "osmanli_tarihi.md",
+          "page_number": null,
+          "text": "# Osmanlı Devleti'nin Kuruluşu Osmanlı Devleti, 1299 yılında Osman Bey tarafından Anadolu'nun kuzeybatısında kurulmuştur. Devlet, kısa sürede Bizans topraklarına doğru genişlemiş ve bir beylikten imparatorluğa dönüşmüştür. 1453 yılında II. Mehmed (Fatih Sultan Mehmed) komutasındaki Osmanlı ordusu İstanbul'u fethetmiş ve Bizans İmparatorluğu'na son vermiştir. İstanbul'un fethi, Osmanlı Devleti'nin bir imparatorluğa dönüşmesinde dönüm noktası olmuştur. Osmanlı Devleti, en geniş sınırlarına 16. yüzyılda Kanuni Sultan Süleyman döneminde ulaşmıştır. Bu dönemde devlet, Avrupa, Asya ve Afrika kıtalarında topraklara sahip olmuştur. Osmanlı Devleti 1922 yılında saltanatın kaldırılmasıyla sona ermiş, yerine 1923 yılında Türkiye Cumhuriyeti kurulmuştur.",
+          "rank": 2,
+          "score": 0.0323
+        },
+        {
+          "chunk_id": "yapay_zeka_temelleri.md::0",
+          "source_file": "yapay_zeka_temelleri.md",
+          "page_number": null,
+          "text": "# Yapay Zeka Temelleri Yapay zeka, bilgisayarların insan benzeri zihinsel süreçleri taklit etmesini sağlayan bilim ve mühendislik dalıdır. Makine öğrenmesi, yapay zekanın en yaygın kullanılan alt alanlarından biridir ve sistemlerin verilerden örüntüler öğrenerek tahmin yapmasını sağlar. Derin öğrenme, çok katmanlı yapay sinir ağları kullanan bir makine öğrenmesi yöntemidir. Görüntü tanıma, doğal dil işleme ve konuşma tanıma gibi alanlarda büyük başarılar elde etmiştir. Büyük dil modelleri (LLM), devasa miktarda metin verisiyle eğitilen ve insan diline benzer metinler üretebilen yapay zeka sistemleridir. RAG (Retrieval-Augmented Generation) yöntemi, bir dil modelinin cevap üretirken harici bir bilgi kaynağından ilgili bilgileri alarak (retrieval) bu bilgileri bağlam olarak kullanmasını sağlar. Bu yaklaşım, modelin güncel olmayan veya eksik bilgisine dayanarak yanlış bilgi üretmesini (halüsinasyon) azaltmaya yardımcı olur.",
+          "rank": 3,
+          "score": 0.0317
+        },
+        {
+          "chunk_id": "yapay_zeka_temelleri.md::1",
+          "source_file": "yapay_zeka_temelleri.md",
+          "page_number": null,
+          "text": "sağlar. Bu yaklaşım, modelin güncel olmayan veya eksik bilgisine dayanarak yanlış bilgi üretmesini (halüsinasyon) azaltmaya yardımcı olur. Vektör veritabanları, metinlerin sayısal temsillerini (embedding) saklayarak anlamsal benzerlik araması yapılmasına olanak tanır. ChromaDB bu amaçla kullanılan açık kaynaklı vektör veritabanlarından biridir.",
+          "rank": 4,
+          "score": 0.0156
+        }
+      ],
+      "steps": [
+        {
+          "action": "assessed_question",
+          "detail": "Bu soru, Türkiye'nin en yüksek dağı ve yüksekliği hakkında olgusal bilgi istemektedir."
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 1: 4 pasaj bulundu"
+        },
+        {
+          "action": "answered_from_context",
+          "detail": "4 pasaj temel alinarak cevaplandi"
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "rag_search",
+          "query": "Türkiye'nin en yüksek dağı yüksekliği",
+          "top_k": 5,
+          "source_file": null,
+          "status": "ok",
+          "passages_found": 4
+        }
+      ]
+    },
+    {
+      "id": "outside_corpus_no_hallucination",
+      "question": "Japonya'nın başkenti neresidir ve nüfusu kaçtır?",
+      "synthetic": false,
+      "provenance": {
+        "source": "live_eval_suite",
+        "note": "agent_suite.yaml / outside_corpus_no_hallucination vakası, canlı koşuda PASS. Gözlemlenen: status=insufficient_context, cevabın sentinel metni, kaynak listesinin boş olması, rag_search'ün çağrılması, declared_insufficient_context aksiyonu, 3 LLM çağrısı (karar + iki değerlendirme, yani iki arama).",
+        "reconstructed_fields": [
+          "steps[].detail",
+          "tool_calls[].query",
+          "tool_calls[].passages_found"
+        ]
+      },
+      "answer": "Dokümanlarda bu bilgi yok.",
+      "status": "insufficient_context",
+      "sources": [],
+      "steps": [
+        {
+          "action": "assessed_question",
+          "detail": "olgusal bilgi gerekiyor, arşivde arama yapılacak"
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 1: 4 pasaj bulundu"
+        },
+        {
+          "action": "refined_query",
+          "detail": "pasajlar soruyla ilgili değil"
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 2: 4 pasaj bulundu"
+        },
+        {
+          "action": "declared_insufficient_context",
+          "detail": "2 arama sonrasi yeterli baglam bulunamadi"
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "rag_search",
+          "query": "Japonya başkenti nüfusu",
+          "top_k": 5,
+          "source_file": null,
+          "status": "ok",
+          "passages_found": 4
+        },
+        {
+          "tool": "rag_search",
+          "query": "Japonya nüfus",
+          "top_k": 5,
+          "source_file": null,
+          "status": "ok",
+          "passages_found": 4
+        }
+      ]
+    },
+    {
+      "id": "direct_answer_without_retrieval",
+      "question": "Merhaba, bugün nasılsın?",
+      "synthetic": false,
+      "provenance": {
+        "source": "live_eval_suite",
+        "note": "agent_suite.yaml / direct_answer_no_retrieval vakası, canlı koşuda PASS. Gözlemlenen: status=answered_without_retrieval, tool_calls boş (hiç arama yapılmadı), 2 LLM çağrısı (karar + doğrudan cevap).",
+        "reconstructed_fields": [
+          "answer",
+          "steps[].detail"
+        ]
+      },
+      "answer": "Merhaba! İyiyim, teşekkür ederim. Yüklenen dokümanlar hakkındaki sorularını yanıtlamak için hazırım.",
+      "status": "answered_without_retrieval",
+      "sources": [],
+      "steps": [
+        {
+          "action": "assessed_question",
+          "detail": "selamlama, doküman araması gerekmiyor"
+        },
+        {
+          "action": "answered_without_retrieval",
+          "detail": "dokuman aramasi yapilmadan cevaplandi"
+        }
+      ],
+      "tool_calls": []
+    },
+    {
+      "id": "citation_correctness",
+      "question": "Osmanlı Devleti hangi yılda ve kim tarafından kurulmuştur?",
+      "synthetic": false,
+      "provenance": {
+        "source": "live_eval_suite",
+        "note": "agent_suite.yaml / citation_correctness vakası, canlı koşuda PASS. Gözlemlenen: status=answered, cevabın '1299' içermesi, cevabın [osmanli_tarihi.md::N] biçiminde atıf yapması, osmanli_tarihi.md::0'ın kaynak listesinde bulunması, 3 LLM çağrısı (tek arama).",
+        "reconstructed_fields": [
+          "answer",
+          "sources[].rank",
+          "sources[].score",
+          "steps[].detail",
+          "tool_calls[].query"
+        ]
+      },
+      "answer": "Osmanlı Devleti 1299 yılında Osman Bey tarafından Anadolu'nun kuzeybatısında kurulmuştur [osmanli_tarihi.md::0].",
+      "status": "answered",
+      "sources": [
+        {
+          "chunk_id": "osmanli_tarihi.md::0",
+          "source_file": "osmanli_tarihi.md",
+          "page_number": null,
+          "text": "# Osmanlı Devleti'nin Kuruluşu Osmanlı Devleti, 1299 yılında Osman Bey tarafından Anadolu'nun kuzeybatısında kurulmuştur. Devlet, kısa sürede Bizans topraklarına doğru genişlemiş ve bir beylikten imparatorluğa dönüşmüştür. 1453 yılında II. Mehmed (Fatih Sultan Mehmed) komutasındaki Osmanlı ordusu İstanbul'u fethetmiş ve Bizans İmparatorluğu'na son vermiştir. İstanbul'un fethi, Osmanlı Devleti'nin bir imparatorluğa dönüşmesinde dönüm noktası olmuştur. Osmanlı Devleti, en geniş sınırlarına 16. yüzyılda Kanuni Sultan Süleyman döneminde ulaşmıştır. Bu dönemde devlet, Avrupa, Asya ve Afrika kıtalarında topraklara sahip olmuştur. Osmanlı Devleti 1922 yılında saltanatın kaldırılmasıyla sona ermiş, yerine 1923 yılında Türkiye Cumhuriyeti kurulmuştur.",
+          "rank": 1,
+          "score": 0.0328
+        },
+        {
+          "chunk_id": "turkiye_cografyasi.md::0",
+          "source_file": "turkiye_cografyasi.md",
+          "page_number": null,
+          "text": "# Türkiye'nin Coğrafyası Türkiye, Asya ve Avrupa kıtaları arasında köprü konumunda yer alan bir ülkedir. Topraklarının büyük bölümü Anadolu yarımadasında, küçük bir bölümü ise Balkan yarımadasının uzantısı olan Trakya'dadır. Türkiye'nin başkenti Ankara'dır ve ülkenin en büyük şehri İstanbul'dur. Türkiye yedi coğrafi bölgeye ayrılır: Marmara, Ege, Akdeniz, İç Anadolu, Karadeniz, Doğu Anadolu ve Güneydoğu Anadolu.",
+          "rank": 2,
+          "score": 0.0323
+        }
+      ],
+      "steps": [
+        {
+          "action": "assessed_question",
+          "detail": "tarihsel olgu sorusu, arşivde arama yapılacak"
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 1: 4 pasaj bulundu"
+        },
+        {
+          "action": "answered_from_context",
+          "detail": "4 pasaj temel alinarak cevaplandi"
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "rag_search",
+          "query": "Osmanlı Devleti kuruluş yılı Osman Bey",
+          "top_k": 5,
+          "source_file": null,
+          "status": "ok",
+          "passages_found": 4
+        }
+      ]
+    },
+    {
+      "id": "synthetic_query_refinement",
+      "question": "bölgeler",
+      "synthetic": true,
+      "provenance": {
+        "source": "handcrafted",
+        "note": "ELLE KURGULANMIŞTIR, hiç çalıştırılmamıştır. Amacı yalnızca başarılı refinement akışını göstermektir: ilk arama yetersiz kalır, agent sorguyu yeniden formüller, ikinci arama başarılı olur ve cevap üretilir. Alan biçimleri ResearchAgent'ın gerçek deterministik çıktısıyla aynıdır, ancak değerler gözlem değildir.",
+        "reconstructed_fields": [
+          "answer",
+          "status",
+          "sources",
+          "steps",
+          "tool_calls"
+        ]
+      },
+      "answer": "Türkiye yedi coğrafi bölgeye ayrılır: Marmara, Ege, Akdeniz, İç Anadolu, Karadeniz, Doğu Anadolu ve Güneydoğu Anadolu [turkiye_cografyasi.md::0].",
+      "status": "answered",
+      "sources": [
+        {
+          "chunk_id": "turkiye_cografyasi.md::0",
+          "source_file": "turkiye_cografyasi.md",
+          "page_number": null,
+          "text": "# Türkiye'nin Coğrafyası Türkiye, Asya ve Avrupa kıtaları arasında köprü konumunda yer alan bir ülkedir. Türkiye'nin başkenti Ankara'dır ve ülkenin en büyük şehri İstanbul'dur. Türkiye yedi coğrafi bölgeye ayrılır: Marmara, Ege, Akdeniz, İç Anadolu, Karadeniz, Doğu Anadolu ve Güneydoğu Anadolu. Bu bölgeler iklim, bitki örtüsü ve ekonomik faaliyetler açısından birbirinden farklılık gösterir.",
+          "rank": 1,
+          "score": 0.0328
+        }
+      ],
+      "steps": [
+        {
+          "action": "assessed_question",
+          "detail": "coğrafi bilgi sorusu, arşivde arama yapılacak"
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 1: 0 pasaj bulundu"
+        },
+        {
+          "action": "refined_query",
+          "detail": "sorgu çok genel, daraltıldı"
+        },
+        {
+          "action": "searched_rag",
+          "detail": "deneme 2: 1 pasaj bulundu"
+        },
+        {
+          "action": "answered_from_context",
+          "detail": "1 pasaj temel alinarak cevaplandi"
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "rag_search",
+          "query": "bölgeler",
+          "top_k": 5,
+          "source_file": null,
+          "status": "empty",
+          "passages_found": 0
+        },
+        {
+          "tool": "rag_search",
+          "query": "Türkiye coğrafi bölgeleri",
+          "top_k": 5,
+          "source_file": null,
+          "status": "ok",
+          "passages_found": 1
+        }
+      ]
+    }
+  ]
+}
