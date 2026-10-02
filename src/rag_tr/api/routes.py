@@ -1,6 +1,5 @@
 from pathlib import Path, PurePosixPath
 
-import anthropic
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
@@ -11,6 +10,7 @@ from rag_tr.api.schemas import (
     QueryResponse,
     SourceItem,
 )
+from rag_tr.contracts import ErrorCode, GenerationError, RetrievalError
 from rag_tr.ingestion.loaders import SUPPORTED_EXTENSIONS
 
 router = APIRouter()
@@ -18,12 +18,22 @@ router = APIRouter()
 UPLOAD_DIR = Path("data/uploads")
 
 
+def _error(code: ErrorCode, message: str) -> dict:
+    return {"code": code.value, "message": message}
+
+
 def _safe_filename(raw: str | None) -> str:
     name = Path(PurePosixPath(raw or "").name).name  # strips any path components, either separator style
     if not name or name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="Geçersiz dosya adı.")
+        raise HTTPException(
+            status_code=400,
+            detail=_error(ErrorCode.INVALID_FILENAME, "Geçersiz dosya adı."),
+        )
     if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Desteklenmeyen dosya türü: {name}")
+        raise HTTPException(
+            status_code=400,
+            detail=_error(ErrorCode.UNSUPPORTED_FILE_TYPE, f"Desteklenmeyen dosya türü: {name}"),
+        )
     return name
 
 
@@ -37,7 +47,10 @@ async def ingest(request: Request, files: list[UploadFile]) -> IngestResponse:
         name = _safe_filename(file.filename)
         dest = (UPLOAD_DIR / name).resolve()
         if UPLOAD_DIR.resolve() not in dest.parents:
-            raise HTTPException(status_code=400, detail="Geçersiz dosya adı.")
+            raise HTTPException(
+                status_code=400,
+                detail=_error(ErrorCode.INVALID_FILENAME, "Geçersiz dosya adı."),
+            )
         dest.write_bytes(await file.read())
         saved_paths.append(dest)
 
@@ -52,15 +65,26 @@ async def ingest(request: Request, files: list[UploadFile]) -> IngestResponse:
 @router.post("/query", response_model=QueryResponse)
 def query(payload: QueryRequest, request: Request) -> QueryResponse:
     service = request.app.state.service
-    top_k = payload.top_k or service.settings.top_k_final
+    top_k = payload.top_k if payload.top_k is not None else service.settings.top_k_final
     try:
         result = service.query(payload.question, top_k)
-    except anthropic.APIError as exc:
-        raise HTTPException(status_code=502, detail=f"Claude API hatası: {exc}") from exc
+    except GenerationError as exc:
+        # Claude tarafindaki (upstream) hata -- agent yeniden denemeyi secebilir.
+        raise HTTPException(
+            status_code=502,
+            detail=_error(ErrorCode.GENERATION_ERROR, f"Claude API hatası: {exc}"),
+        ) from exc
+    except RetrievalError as exc:
+        # Kendi retrieval katmanimizdaki hata -- yeniden denemek genelde yardimci olmaz.
+        raise HTTPException(
+            status_code=500,
+            detail=_error(ErrorCode.RETRIEVAL_ERROR, f"Retrieval hatası: {exc}"),
+        ) from exc
     return QueryResponse(
         answer=result.answer,
         sources=[SourceItem(**source) for source in result.sources],
         used_chunk_ids=result.used_chunk_ids,
+        status=result.status,
     )
 
 

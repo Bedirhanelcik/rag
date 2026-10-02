@@ -13,8 +13,14 @@ from fastapi.testclient import TestClient
 from rag_tr.api import main as main_module
 from rag_tr.api import routes
 from rag_tr.api.main import create_app
+from rag_tr.contracts import (
+    NO_CONTEXT_MESSAGE,
+    ErrorCode,
+    GenerationError,
+    RetrievalError,
+)
+from rag_tr.generation.answerer import AnswerResult, no_context_result
 from rag_tr.service import IngestResult
-from rag_tr.generation.answerer import AnswerResult
 
 
 class _StubVectorStore:
@@ -47,6 +53,7 @@ class StubService:
         self.vector_store = _StubVectorStore()
         self.bm25_index = _StubBM25()
         self.query_error = query_error
+        self.query_result: AnswerResult | None = None
         self.ingested_paths: list[list[Path]] = []
         self.queries: list[tuple[str, int]] = []
 
@@ -62,6 +69,8 @@ class StubService:
         self.queries.append((question, top_k))
         if self.query_error is not None:
             raise self.query_error
+        if self.query_result is not None:
+            return self.query_result
         return AnswerResult(
             answer="Ankara'dır [1].",
             sources=[
@@ -177,3 +186,75 @@ def test_module_level_app_attribute_still_works_for_uvicorn(monkeypatch, service
 def test_unknown_module_attribute_still_raises_attribute_error():
     with pytest.raises(AttributeError):
         main_module.bulunmayan_attribute
+
+
+def test_query_response_carries_machine_readable_status(client):
+    body = client.post("/query", json={"question": "Başkent neresi?"}).json()
+
+    assert body["status"] == "answered"
+
+
+def test_query_reports_no_relevant_context_status(tmp_path, monkeypatch):
+    service = StubService()
+    service.query_result = no_context_result()
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
+    local_client = TestClient(create_app(service=service))
+
+    response = local_client.post("/query", json={"question": "Bilinmeyen bir sey?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "no_relevant_context"
+    assert body["answer"] == NO_CONTEXT_MESSAGE
+    assert body["sources"] == []
+    assert body["used_chunk_ids"] == []
+
+
+def test_generation_error_maps_to_502_with_code(tmp_path, monkeypatch):
+    service = StubService(query_error=GenerationError("Claude down"))
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
+    local_client = TestClient(create_app(service=service))
+
+    response = local_client.post("/query", json={"question": "Soru?"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == ErrorCode.GENERATION_ERROR.value
+
+
+def test_retrieval_error_maps_to_500_with_code(tmp_path, monkeypatch):
+    service = StubService(query_error=RetrievalError("chroma down"))
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
+    local_client = TestClient(create_app(service=service))
+
+    response = local_client.post("/query", json={"question": "Soru?"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == ErrorCode.RETRIEVAL_ERROR.value
+
+
+def test_unsupported_extension_reports_its_error_code(client):
+    response = client.post("/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == ErrorCode.UNSUPPORTED_FILE_TYPE.value
+
+
+def test_invalid_filename_reports_its_error_code(client):
+    response = client.post("/ingest", files={"files": ("..", b"veri", "text/plain")})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == ErrorCode.INVALID_FILENAME.value
+
+
+def test_top_k_zero_is_rejected_instead_of_silently_defaulting(client, service):
+    response = client.post("/query", json={"question": "Soru?", "top_k": 0})
+
+    assert response.status_code == 422
+    assert service.queries == []
+
+
+def test_empty_question_is_rejected(client, service):
+    response = client.post("/query", json={"question": ""})
+
+    assert response.status_code == 422
+    assert service.queries == []

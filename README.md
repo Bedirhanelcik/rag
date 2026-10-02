@@ -167,7 +167,8 @@ curl -X POST http://localhost:8000/query \
       "text": "Osmanlı Devleti 1299 yılında Söğüt'te kurulmuştur..."
     }
   ],
-  "used_chunk_ids": ["osmanli_tarihi.md::0"]
+  "used_chunk_ids": ["osmanli_tarihi.md::0"],
+  "status": "answered"
 }
 ```
 
@@ -178,10 +179,27 @@ curl http://localhost:8000/health
 ```
 
 ```json
-{"status": "ok", "embedding_model": "intfloat/multilingual-e5-small", "chunk_count": 12}
+{"status": "ok", "embedding_model": "intfloat/multilingual-e5-small", "chunk_count": 12, "keyword_index_size": 12}
 ```
 
-Dokümanlarda cevap yoksa veya henüz hiç doküman yüklenmemişse `answer` alanı `"Dokümanlarda bu bilgi yok."` olarak döner ve `sources`/`used_chunk_ids` boş liste olur.
+### Makine-okunur sözleşme (agent entegrasyonu için)
+
+`/query` yanıtındaki `status` alanı, çağıran tarafın serbest metni parse etmesine gerek kalmadan sonucu sınıflandırmasını sağlar:
+
+| `status` | Anlamı |
+|---|---|
+| `answered` | Bağlamdan kaynak göstererek cevap üretildi; `sources` ve `used_chunk_ids` doludur. |
+| `no_relevant_context` | Hiç doküman yüklenmemiş, retrieval sonuç döndürmemiş veya Claude bağlamda cevap olmadığına karar vermiş. `answer` alanı `"Dokümanlarda bu bilgi yok."`, `sources`/`used_chunk_ids` boş listedir. |
+
+Hata durumlarında HTTP gövdesi `{"detail": {"code": ..., "message": ...}}` şeklindedir ve `code` sabit bir değerdir (`src/rag_tr/contracts.py`):
+
+| HTTP | `code` | Anlamı |
+|---|---|---|
+| 502 | `generation_error` | Claude (upstream) çağrısı başarısız — yeniden denemek anlamlı olabilir. |
+| 500 | `retrieval_error` | Embedding/vektör deposu/keyword index tarafında hata — yeniden denemek genelde yardımcı olmaz. |
+| 400 | `invalid_filename` | Dosya adı boş, `.` veya `..`. |
+| 400 | `unsupported_file_type` | Uzantı `.pdf`/`.txt`/`.md` dışında. |
+| 422 | — | Pydantic doğrulama hatası (örn. boş `question`, `top_k=0`). `top_k` verilecekse en az 1 olmalıdır; 0 artık sessizce varsayılana düşmez. |
 
 ## Tasarım Kararları
 

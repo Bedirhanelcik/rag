@@ -4,7 +4,8 @@ from pathlib import Path
 import anthropic
 
 from rag_tr.config import Settings
-from rag_tr.generation.answerer import AnswerResult, generate_answer
+from rag_tr.contracts import GenerationError, RetrievalError
+from rag_tr.generation.answerer import AnswerResult, generate_answer, no_context_result
 from rag_tr.ingestion.chunker import chunk_text
 from rag_tr.ingestion.loaders import load_document
 from rag_tr.retrieval.embeddings import EmbeddingModel
@@ -82,17 +83,30 @@ class RAGService:
         return IngestResult(ingested_files=ingested, failed_files=failed, chunk_count=total_chunks)
 
     def query(self, question: str, top_k: int) -> AnswerResult:
-        if self.vector_store.count() == 0:
-            return AnswerResult(answer="Dokümanlarda bu bilgi yok.", sources=[], used_chunk_ids=[])
+        """Retrieval ve generation hatalarini ayri tiplere sararak yukari tasir;
+        boylece API katmani (ve onu tool olarak cagiran agent) hangi asamanin
+        basarisiz oldugunu serbest metne bakmadan ayirt edebilir."""
+        try:
+            if self.vector_store.count() == 0:
+                return no_context_result()
 
-        query_embedding = self.embedding_model.encode_query(question)
-        vector_results = self.vector_store.query(query_embedding, self.settings.top_k_vector)
-        keyword_results = self.bm25_index.query(question, self.settings.top_k_keyword)
-        fused = reciprocal_rank_fusion(vector_results, keyword_results, k=self.settings.rrf_k)
-        top_ids = [chunk_id for chunk_id, _ in fused[:top_k]]
+            query_embedding = self.embedding_model.encode_query(question)
+            vector_results = self.vector_store.query(query_embedding, self.settings.top_k_vector)
+            keyword_results = self.bm25_index.query(question, self.settings.top_k_keyword)
+            fused = reciprocal_rank_fusion(vector_results, keyword_results, k=self.settings.rrf_k)
+            top_ids = [chunk_id for chunk_id, _ in fused[:top_k]]
 
-        if not top_ids:
-            return AnswerResult(answer="Dokümanlarda bu bilgi yok.", sources=[], used_chunk_ids=[])
+            if not top_ids:
+                return no_context_result()
 
-        chunks = self.vector_store.get_chunks(top_ids)
-        return generate_answer(question, chunks, self.client, self.settings.anthropic_model)
+            chunks = self.vector_store.get_chunks(top_ids)
+        except Exception as exc:
+            raise RetrievalError(str(exc)) from exc
+
+        if not chunks:
+            return no_context_result()
+
+        try:
+            return generate_answer(question, chunks, self.client, self.settings.anthropic_model)
+        except Exception as exc:
+            raise GenerationError(str(exc)) from exc

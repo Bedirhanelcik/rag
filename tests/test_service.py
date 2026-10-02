@@ -4,6 +4,15 @@ Gercek ChromaDB ve gercek BM25 kullanilir; yalnizca embedding modeli ve Claude
 client'i fake'lenir, boylece ag/API key gerekmez.
 """
 
+import pytest
+
+from conftest import FakeAnthropicClient
+from rag_tr.contracts import (
+    NO_CONTEXT_MESSAGE,
+    GenerationError,
+    QueryStatus,
+    RetrievalError,
+)
 from rag_tr.retrieval.keyword_search import BM25Index
 from rag_tr.retrieval.vector_store import VectorStore
 from rag_tr.service import RAGService
@@ -175,3 +184,67 @@ def test_empty_persistent_store_rebuilds_to_empty_index(
     assert service.rebuild_keyword_index() == 0
     assert service.bm25_index.size() == 0
     assert service.bm25_index.query("herhangi", 5) == []
+
+
+def test_empty_corpus_reports_no_relevant_context_status(
+    settings, fake_embedding_model, fake_client
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+
+    result = service.query("Herhangi bir soru?", top_k=3)
+
+    assert result.status is QueryStatus.NO_RELEVANT_CONTEXT
+
+
+def test_successful_answer_reports_answered_status(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    result = service.query("Başkent neresi?", top_k=3)
+
+    assert result.status is QueryStatus.ANSWERED
+
+
+def test_claude_saying_not_in_documents_is_reported_as_no_relevant_context(
+    settings, fake_embedding_model, tmp_path
+):
+    """Chunk bulundu ama Claude cevap olmadigina karar verdi: agent bunu serbest
+    metni parse etmeden ayirt edebilmeli."""
+    client = FakeAnthropicClient(answer=NO_CONTEXT_MESSAGE)
+    service = _service(settings, fake_embedding_model, client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    result = service.query("Mars'ta hava nasil?", top_k=3)
+
+    assert result.status is QueryStatus.NO_RELEVANT_CONTEXT
+    assert result.answer == NO_CONTEXT_MESSAGE
+    assert result.sources == []
+    assert result.used_chunk_ids == []
+
+
+def test_claude_failure_surfaces_as_generation_error(
+    settings, fake_embedding_model, tmp_path
+):
+    client = FakeAnthropicClient(error=RuntimeError("upstream patladi"))
+    service = _service(settings, fake_embedding_model, client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    with pytest.raises(GenerationError):
+        service.query("Başkent neresi?", top_k=3)
+
+
+def test_retrieval_failure_surfaces_as_retrieval_error(
+    settings, fake_embedding_model, fake_client, tmp_path
+):
+    service = _service(settings, fake_embedding_model, fake_client)
+    service.ingest_files([_write(tmp_path, "cografya.md", DOC)])
+
+    def _boom(_text):
+        raise RuntimeError("embedding modeli patladi")
+
+    service.embedding_model.encode_query = _boom
+
+    with pytest.raises(RetrievalError):
+        service.query("Başkent neresi?", top_k=3)
