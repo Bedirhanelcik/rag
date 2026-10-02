@@ -22,3 +22,11 @@ class Settings(BaseSettings):
     # UPLOAD_ENABLED=true ile acilir; dagitimda kapali kalmali.
     upload_enabled: bool = False
     upload_max_bytes: int = 10 * 1024 * 1024
+    # Virgulle ayrilmis frontend origin listesi. Bos birakilirsa CORS
+    # middleware'i hic eklenmez: onerilen dagitimda tarayici backend'e dogrudan
+    # konusmaz, istekler Next.js sunucu tarafindan proxy'lenir.
+    allowed_origins: str = ""
+
+    @property
+    def allowed_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]

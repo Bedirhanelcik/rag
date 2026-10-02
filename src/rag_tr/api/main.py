@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from rag_tr.api.agent_routes import router as agent_router
 from rag_tr.api.routes import router
@@ -15,9 +16,36 @@ def build_service() -> RAGService:
     embedding modelini ve Anthropic client'ini yaratir."""
     settings = Settings()
     Path(settings.chroma_persist_dir).mkdir(parents=True, exist_ok=True)
-    Path("data/uploads").mkdir(parents=True, exist_ok=True)
+    # Yukleme dizini yalnizca ozellik acikken olusturulur: kapali bir dagitimda
+    # (varsayilan) container'da gereksiz bir yazma denemesi yapilmaz.
+    if settings.upload_enabled:
+        Path("data/uploads").mkdir(parents=True, exist_ok=True)
     return RAGService(settings)
 
+
+def _configure_cors(app: FastAPI) -> None:
+    """ALLOWED_ORIGINS tanimliysa CORS'u YALNIZCA o origin'lere acar.
+
+    Bos birakilirsa middleware hic eklenmez; onerilen dagitimda tarayici
+    backend'e dogrudan konusmadigi (Next.js sunucu tarafi proxy'ledigi) icin
+    CORS'a ihtiyac yoktur. Joker (*) hicbir durumda kullanilmaz ve kimlik
+    bilgisi tasinmasina izin verilmez.
+
+    `getattr` kullaniliyor: testlerde enjekte edilen sahte servislerin ayar
+    nesnesinde bu alan bulunmayabilir.
+    """
+    settings = getattr(app.state.service, "settings", None)
+    origins = getattr(settings, "allowed_origin_list", None) or []
+    if not origins:
+        return
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["content-type", "accept"],
+    )
 
 def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     """`agent` verilirse app.state'e yerlestirilir (testler fake enjekte eder);
@@ -25,6 +53,7 @@ def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     dagitim Gemini key'i olmadan da calismaya devam eder."""
     app = FastAPI(title="Türkçe RAG API")
     app.state.service = service if service is not None else build_service()
+    _configure_cors(app)
     app.state.agent = agent
     app.state.agent_factory = None
     app.include_router(router)

@@ -1,8 +1,43 @@
+# Agent + RAG servisi. Railway benzeri bir platformda veya docker-compose ile
+# calisir. Sirlar imaja girmez: her sey ortam degiskeniyle verilir, .env
+# .dockerignore tarafindan dislanir.
 FROM python:3.11-slim
+
 WORKDIR /app
+
+# Model indirmeleri imaj icinde, uygulamanin yazabilecegi bir yere gider.
+ENV HF_HOME=/app/.cache/huggingface \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
+
 RUN pip install --no-cache-dir uv
+
 COPY pyproject.toml uv.lock ./
 COPY src ./src
+
+# --no-dev: test ve degerlendirme bagimliliklari (promptevals dahil) uretim
+# imajina girmez.
 RUN uv sync --frozen --no-dev
-ENV PATH="/app/.venv/bin:$PATH"
-CMD ["uvicorn", "rag_tr.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Embedding modeli imaja gomuluyor. Aksi halde ilk istek ~90 MB indirme
+# bekliyor; soguk baslangicta bu zaman asimina ve kalici olmayan dosya
+# sisteminde her yeniden baslatmada tekrar indirmeye yol aciyor. Boylece
+# uygulama acilista hicbir ag erisimine ihtiyac duymuyor.
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('intfloat/multilingual-e5-small')"
+
+# Kalici dizin: platformda buraya bir volume baglanir ve CHROMA_PERSIST_DIR
+# bunu gosterir (orn. CHROMA_PERSIST_DIR=/data/chroma). Volume baglanmazsa da
+# dizin var oldugu icin uygulama acilabilir.
+RUN mkdir -p /data/chroma
+VOLUME ["/data"]
+
+EXPOSE 8000
+
+# Platform PORT'u ortam degiskeniyle verir (Railway boyle yapar); yoksa 8000.
+# Shell formu kasitli: ${PORT} genislemesi icin gerekli.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import os,urllib.request; \
+urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT','8000')}/health\").read()"
+
+CMD uvicorn rag_tr.api.main:app --host 0.0.0.0 --port ${PORT:-8000}

@@ -248,6 +248,52 @@ uv run --no-editable python scripts/agent_eval.py
 
 Testler tamamen fake LLM/RAG bileşenleriyle çalışır; normal test koşusu hiçbir API çağrısı yapmaz.
 
+## Dağıtım (deployment)
+
+İki ayrı deployable var: bu repodaki Python servisi (agent + RAG) ve ayrı bir
+repodaki Next.js arayüzü. Tarayıcı **yalnızca** Next.js ile konuşur; model
+çağrıları ve her türlü sır sunucu tarafında kalır.
+
+```
+Tarayıcı → Next.js (Vercel) → /api/ask · /api/upload  →  FastAPI (Railway) → Gemini
+                                   (AGENT_API_URL, sunucu tarafı)
+```
+
+### Python servisi
+
+`Dockerfile.api` ile çalışır. Üç nokta önemli:
+
+- **Port:** platform `PORT` değişkenini verir; başlatma komutu
+  `uvicorn rag_tr.api.main:app --host 0.0.0.0 --port ${PORT:-8000}`.
+- **Kalıcılık:** Chroma tek kalıcılık noktasıdır (BM25 açılışta ondan yeniden
+  kurulur). `/data` dizinine bir volume bağlanıp `CHROMA_PERSIST_DIR=/data/chroma`
+  verilmelidir; aksi halde her dağıtım korpusu sıfırlar.
+- **Health check:** `GET /health` hiçbir model sağlayıcısına dokunmaz (agent
+  tembel kurulur), bu yüzden platform health check'i olarak güvenle kullanılır.
+
+Embedding modeli imaja gömülüdür, böylece ilk istek 90 MB'lık bir indirme
+beklemez ve uygulama açılışta ağ erişimine ihtiyaç duymaz.
+
+| Değişken | Zorunlu | Varsayılan | Not |
+|---|---|---|---|
+| `GEMINI_API_KEY` | agent için evet | — | Yalnızca `/agent/ask` kullanır |
+| `GEMINI_AGENT_MODEL` | hayır | `gemini-2.5-flash` | |
+| `CHROMA_PERSIST_DIR` | dağıtımda evet | `data/chroma` | Volume yolu, örn. `/data/chroma` |
+| `UPLOAD_ENABLED` | hayır | `false` | **Dağıtımda kapalı kalmalı** (korpus paylaşımlı) |
+| `UPLOAD_MAX_BYTES` | hayır | `10485760` | 10 MiB |
+| `ALLOWED_ORIGINS` | hayır | boş | Boşsa CORS middleware eklenmez; önerilen kurulumda gerekmez |
+| `ANTHROPIC_API_KEY` | hayır | boş | Yalnızca eski `/query` yolu için |
+| `EMBEDDING_MODEL_NAME`, `CHUNK_*`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |
+
+Sırlar imaja girmez: hepsi ortam değişkeniyle verilir ve `.env`
+`.dockerignore` ile dışlanır.
+
+### Next.js arayüzü
+
+Vercel'de çalışır. Ortam değişkenleri arayüz reposunun README'sinde listelidir;
+özeti: `AGENT_API_URL` (sunucu tarafı, **asla** `NEXT_PUBLIC_` değil),
+`DEMO_MODE`, `UPLOAD_ENABLED`, ve herkese açık profil bağlantıları.
+
 ## Geliştirme Fikirleri
 
 - **Reranker modeli eklenmesi:** RRF ile birleştirilen ilk sonuçların üzerine, cross-encoder tabanlı bir reranker (örn. bir Türkçe/çok dilli cross-encoder modeli) uygulanarak `top_k_final` öncesi sonuçların isabet oranı artırılabilir.
