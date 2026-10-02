@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     # bos birakilirsa yalnizca o cagri sirasinda kimlik hatasi alinir.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
-    embedding_model_name: str = "intfloat/multilingual-e5-small"
+    # Embedding Gemini API uzerinden uretilir: yerel bir ML modeli
+    # yuklenmedigi icin surec bellegi 512 MB sinirinin altinda kalir.
+    gemini_api_key: str | None = None
+    embedding_model_name: str = "gemini-embedding-001"
+    embedding_dimensions: int = 768
     chroma_persist_dir: str = "data/chroma"
     chunk_size: int = 1000
     chunk_overlap: int = 150

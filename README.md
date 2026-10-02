@@ -271,8 +271,23 @@ Tarayıcı → Next.js (Vercel) → /api/ask · /api/upload  →  FastAPI (Railw
 - **Health check:** `GET /health` hiçbir model sağlayıcısına dokunmaz (agent
   tembel kurulur), bu yüzden platform health check'i olarak güvenle kullanılır.
 
-Embedding modeli imaja gömülüdür, böylece ilk istek 90 MB'lık bir indirme
-beklemez ve uygulama açılışta ağ erişimine ihtiyaç duymaz.
+**Embedding Gemini API üzerinden üretilir, yerel bir ML modeli yüklenmez.**
+Bunun nedeni bellek: `intfloat/multilingual-e5-small` 118M parametredir (250k
+sözlük yüzünden embedding matrisi tek başına ~384 MB fp32) ve
+`sentence-transformers` ile yüklendiğinde süreç RSS'i ölçülmüş değerlerle
+~1.26 GB'a çıkıyordu — 512 MB bellekli bir ortamda imkânsız. Gemini embedding
+API'si ile ölçülen açılış **~148 MB** (limitin %29'u) ve süreçte hiç ML çalışma
+zamanı yok. Hibrit retrieval mimarisi (Chroma + BM25 + RRF) aynen korundu;
+değişen tek şey vektörlerin nerede üretildiği.
+
+Sorgu ve pasajlar hâlâ asimetrik kodlanır: e5'teki `"query: "` / `"passage: "`
+öneklerinin Gemini karşılığı `task_type` alanıdır (`RETRIEVAL_QUERY` /
+`RETRIEVAL_DOCUMENT`). Vektörler L2-normalize edilir, böylece Chroma'nın
+varsayılan L2 uzaklığıyla sıralama cosine sıralamasıyla aynı kalır.
+
+> **Göç notu:** e5 ile üretilmiş eski vektörler 384 boyutluydu, yenileri 768.
+> Mevcut bir Chroma koleksiyonu varsa boyut uyuşmazlığı verir; dağıtımdan önce
+> koleksiyonu silip dokümanları bir kez yeniden ingest etmek gerekir.
 
 | Değişken | Zorunlu | Varsayılan | Not |
 |---|---|---|---|
@@ -283,7 +298,9 @@ beklemez ve uygulama açılışta ağ erişimine ihtiyaç duymaz.
 | `UPLOAD_MAX_BYTES` | hayır | `10485760` | 10 MiB |
 | `ALLOWED_ORIGINS` | hayır | boş | Boşsa CORS middleware eklenmez; önerilen kurulumda gerekmez |
 | `ANTHROPIC_API_KEY` | hayır | boş | Yalnızca eski `/query` yolu için |
-| `EMBEDDING_MODEL_NAME`, `CHUNK_*`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |
+| `EMBEDDING_MODEL_NAME` | hayır | `gemini-embedding-001` | **Gemini embedding modeli** — HuggingFace adı değil |
+| `EMBEDDING_DIMENSIONS` | hayır | `768` | Vektör boyutu |
+| `CHUNK_*`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |
 
 Sırlar imaja girmez: hepsi ortam değişkeniyle verilir ve `.env`
 `.dockerignore` ile dışlanır.

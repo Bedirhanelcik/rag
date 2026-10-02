@@ -40,7 +40,11 @@ class RAGService:
         """Bagimliliklar test edilebilirlik icin enjekte edilebilir; verilmezse
         uretim davranisi aynen korunur (gercek model, kalici store, gercek client)."""
         self.settings = settings
-        self.embedding_model = embedding_model or EmbeddingModel(settings.embedding_model_name)
+        self.embedding_model = embedding_model or EmbeddingModel(
+            settings.embedding_model_name,
+            api_key=settings.gemini_api_key,
+            dimensions=settings.embedding_dimensions,
+        )
         self.vector_store = vector_store or VectorStore(settings.chroma_persist_dir)
         self.bm25_index = bm25_index or BM25Index()
         self.client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)

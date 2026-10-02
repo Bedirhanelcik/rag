@@ -1,13 +1,14 @@
-# Agent + RAG servisi. Railway benzeri bir platformda veya docker-compose ile
-# calisir. Sirlar imaja girmez: her sey ortam degiskeniyle verilir, .env
-# .dockerignore tarafindan dislanir.
+# Agent + RAG servisi. Render/Railway benzeri bir platformda veya
+# docker-compose ile calisir. Sirlar imaja girmez: her sey ortam degiskeniyle
+# verilir, .env .dockerignore tarafindan dislanir.
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Model indirmeleri imaj icinde, uygulamanin yazabilecegi bir yere gider.
-ENV HF_HOME=/app/.cache/huggingface \
-    PYTHONUNBUFFERED=1 \
+# Yerel bir ML modeli yuklenmiyor: embedding Gemini API uzerinden uretiliyor.
+# Bu sayede imajda model onbellegi tutulmuyor ve surec bellegi 512 MB'lik
+# ortamlarda bile dusuk kaliyor (olculen acilis: ~148 MB).
+ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN pip install --no-cache-dir uv
@@ -19,13 +20,6 @@ COPY src ./src
 # imajina girmez.
 RUN uv sync --frozen --no-dev
 
-# Embedding modeli imaja gomuluyor. Aksi halde ilk istek ~90 MB indirme
-# bekliyor; soguk baslangicta bu zaman asimina ve kalici olmayan dosya
-# sisteminde her yeniden baslatmada tekrar indirmeye yol aciyor. Boylece
-# uygulama acilista hicbir ag erisimine ihtiyac duymuyor.
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('intfloat/multilingual-e5-small')"
-
 # Kalici dizin: platformda buraya bir volume baglanir ve CHROMA_PERSIST_DIR
 # bunu gosterir (orn. CHROMA_PERSIST_DIR=/data/chroma). Volume baglanmazsa da
 # dizin var oldugu icin uygulama acilabilir.
@@ -34,7 +28,7 @@ VOLUME ["/data"]
 
 EXPOSE 8000
 
-# Platform PORT'u ortam degiskeniyle verir (Railway boyle yapar); yoksa 8000.
+# Platform PORT'u ortam degiskeniyle verir; yoksa 8000.
 # Shell formu kasitli: ${PORT} genislemesi icin gerekli.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,urllib.request; \
