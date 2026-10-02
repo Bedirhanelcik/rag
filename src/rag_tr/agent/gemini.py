@@ -96,6 +96,8 @@ class GeminiAgentLLM:
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
         self.call_count = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
 
     @classmethod
     def from_env(cls, settings: AgentSettings | None = None) -> "GeminiAgentLLM":
@@ -124,11 +126,16 @@ class GeminiAgentLLM:
         if schema is not None:
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_schema"] = schema
-        return self._client.models.generate_content(
+        response = self._client.models.generate_content(
             model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(**config_kwargs),
         )
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            self.input_tokens += getattr(usage, "prompt_token_count", 0) or 0
+            self.output_tokens += getattr(usage, "candidates_token_count", 0) or 0
+        return response
 
     def needs_retrieval(self, question: str) -> RetrievalDecision:
         response = self._generate(_DECIDE_SYSTEM, f"Soru: {question}", RetrievalDecisionOut)

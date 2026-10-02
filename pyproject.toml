@@ -19,7 +19,13 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.3"]
+# promptevals yalnizca degerlendirme (eval) yolunda gerekiyor; dev grubunda
+# tutuluyor, Dockerfile'lar `uv sync --no-dev` kullandigi icin production
+# image'ina girmiyor.
+dev = ["pytest>=8.3", "promptevals"]
+
+[tool.uv.sources]
+promptevals = { path = "../LLM", editable = false }
 
 [build-system]
 requires = ["hatchling"]

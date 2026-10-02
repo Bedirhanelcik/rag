@@ -215,6 +215,28 @@ Salt vektör (embedding) araması, anlamsal olarak yakın metinleri iyi yakalar 
 **Neden RRF (Reciprocal Rank Fusion)?**
 Vektör aramasının döndürdüğü skorlar (cosine similarity, genelde 0-1 aralığında) ile BM25'in döndürdüğü skorlar (sınırsız, corpus'a ve terim frekansına bağlı, tamamen farklı bir ölçekte) doğrudan karşılaştırılamaz veya toplanamaz — hangi skorun "daha iyi" olduğunu belirlemek için ek bir normalizasyon adımı gerekirdi ve bu normalizasyon genellikle keyfi/kırılgan olur. RRF bu sorunu skorları tamamen görmezden gelerek çözer: her iki sonuç listesindeki chunk'ları yalnızca sıralarına (rank) göre değerlendirir ve `1 / (rank + k)` formülüyle bir puan verir (`hybrid.py`'deki `reciprocal_rank_fusion`, `k=rrf_k`). Böylece bir chunk her iki listede de üst sıralarda çıkıyorsa toplam puanı yükselir, listelerden yalnızca birinde çıkıyorsa da yine de makul bir puan alır — hiçbir skor ölçeğini diğerine göre normalize etmeye gerek kalmadan, adil ve basit bir birleştirme yapılmış olur.
 
+## Agent ve Değerlendirme Katmanı
+
+```
+Kullanıcı sorusu → Agent → (karar) → RAG retrieval → gerekçeli cevap → Promptevals
+```
+
+**RAG** (`src/rag_tr/`) retrieval sağlar: `RAGService.retrieve()` Claude çağırmadan tiplenmiş `Passage` listesi döndürür.
+
+**Agent** (`src/rag_tr/agent/`) bu retrieval'ı bir *tool* olarak kullanır. Sabit bir pipeline değil, açık bir karar döngüsüdür: arama gerekip gerekmediğine karar verir (gerekmiyorsa RAG'ı hiç çağırmaz), dönen pasajları denetler, gerekirse sorguyu yeniden formülleyip tekrar arar ve yeterli bağlam yoksa cevap üretmeyi reddeder. LLM sağlayıcısı `AgentLLM` arkasında soyutlanmıştır (`gemini.py`, Gemini free tier).
+
+**Promptevals** (ayrı proje, `../LLM`) agent'ın *davranışını* ölçer. Amaç "agent'ı yaptım" değil, "davranışını ölçtüm" diyebilmektir: `eval/agent_suite.yaml` içindeki her vaka tek bir string eşleşmesi yerine gözlemlenebilir davranışı denetler — hangi status döndü, RAG gerçekten çağrıldı mı, gereksiz arama yapıldı mı, doğru kaynak gösterildi mi, atıf formatı doğru mu, korpus dışı soruda uydurma yapıldı mı. Kontrolleri promptevals'ın kendi assertion checker'ları yapar; burada hiçbir evaluator mantığı tekrar yazılmaz ve promptevals RAG'ın içini bilmez — kendisine yalnızca gözlemlenebilir metin gider. Vakaların çoğu deterministik ve ücretsizdir; LLM judge yalnızca gerçekten anlamsal değerlendirme gereken tek vakada kullanılır.
+
+```bash
+# Agent'ı tek soruyla canlı denemek (Gemini free tier)
+uv run --no-editable python scripts/agent_smoke.py
+
+# Agent davranış değerlendirmesi (opt-in, küçük suite)
+uv run --no-editable python scripts/agent_eval.py
+```
+
+Testler tamamen fake LLM/RAG bileşenleriyle çalışır; normal test koşusu hiçbir API çağrısı yapmaz.
+
 ## Geliştirme Fikirleri
 
 - **Reranker modeli eklenmesi:** RRF ile birleştirilen ilk sonuçların üzerine, cross-encoder tabanlı bir reranker (örn. bir Türkçe/çok dilli cross-encoder modeli) uygulanarak `top_k_final` öncesi sonuçların isabet oranı artırılabilir.

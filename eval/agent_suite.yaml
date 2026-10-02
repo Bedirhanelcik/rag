@@ -1,0 +1,62 @@
+# Agent davranis degerlendirme suite'i.
+#
+# Kasitli olarak kucuk: her vaka agent'in GOZLEMLENEBILIR davranisini olcer
+# (status, kullanilan tool, kaynaklar, aksiyon izi, cevap metni) -- tek bir
+# string eslesmesi degil. LLM judge yalnizca gercekten anlamsal degerlendirme
+# gereken tek vakada kullanilir; geri kalan her sey deterministik ve ucretsizdir.
+
+cases:
+  # 1. Olgusal RAG sorusu: RAG kullanilmali, dogru kaynak gosterilmeli.
+  - id: factual_rag_question
+    question: "Türkiye'nin en yüksek dağı hangisidir ve yüksekliği kaç metredir?"
+    expect_status: answered
+    expect_tool: rag_search
+    expect_action: [searched_rag, answered_from_context]
+    expect_source: turkiye_cografyasi.md::0
+    answer_contains: ["Ağrı"]
+    answer_not_contains: ["Dokümanlarda bu bilgi yok."]
+
+  # 2. Korpus disi soru: uydurma YAPMAMALI, yetersiz baglam bildirmeli.
+  - id: outside_corpus_no_hallucination
+    question: "Japonya'nın başkenti neresidir ve nüfusu kaçtır?"
+    expect_status: insufficient_context
+    expect_tool: rag_search
+    expect_action: declared_insufficient_context
+    answer_contains: ["Dokümanlarda bu bilgi yok."]
+    answer_not_contains: ["Tokyo"]
+
+  # 3. Dogrudan cevap: RAG gereksiz oldugunda arama yapilmamali.
+  - id: direct_answer_no_retrieval
+    question: "Merhaba, bugün nasılsın?"
+    expect_status: answered_without_retrieval
+    expect_no_tool: true
+    expect_action: answered_without_retrieval
+
+  # 4. Atif dogrulugu: cevapta beklenen chunk kimligi gecmeli.
+  - id: citation_correctness
+    question: "Osmanlı Devleti hangi yılda ve kim tarafından kurulmuştur?"
+    expect_status: answered
+    expect_source: osmanli_tarihi.md::0
+    answer_regex: '\[osmanli_tarihi\.md::[0-9]+\]'
+    answer_contains: ["1299"]
+
+  # 5. Belirsiz sorgu: agent ya yeniden formulleyip tekrar arar ya da yetersiz
+  #    baglam bildirir -- her iki davranis da kabul edilebilir, uydurma degil.
+  - id: ambiguous_query_refinement
+    question: "bölge"
+    expect_status: [answered, insufficient_context]
+    expect_tool: rag_search
+    answer_not_contains: ["bilmiyorum ama sanırım"]
+
+  # 6. Anlamsal degerlendirme: yalnizca bu vakada LLM judge kullanilir.
+  - id: grounded_answer_quality
+    question: "Türkiye kaç coğrafi bölgeye ayrılır?"
+    expect_status: answered
+    expect_tool: rag_search
+    judge:
+      rubric: >
+        Cevap, Türkiye'nin yedi coğrafi bölgeye ayrıldığını açıkça söylüyor mu,
+        yalnızca verilen dokümandaki bilgiye dayanıyor mu ve en az bir kaynağa
+        köşeli parantez içinde atıf yapıyor mu? Uydurma bilgi varsa düşük puan ver.
+      threshold: 3
+      judge_model: gemini-2.5-flash
