@@ -71,5 +71,5 @@ def health(request: Request) -> HealthResponse:
         status="ok",
         embedding_model=service.settings.embedding_model_name,
         chunk_count=service.vector_store.count(),
-        keyword_index_size=len(service.bm25_index._chunk_ids),
+        keyword_index_size=service.bm25_index.size(),
     )
