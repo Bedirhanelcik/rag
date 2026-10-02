@@ -26,6 +26,9 @@ from rag_tr.service import RAGService
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SUITE = PROJECT_ROOT / "eval" / "agent_suite.yaml"
+# Gemini free tier: 5 istek/dakika. Her vaka 2-3 istek harciyor, bu yuzden
+# vakalar arasina bekleme konuyor -- kosu yavas ama kotayi tuketmiyor.
+CASE_DELAY_SECONDS = 45.0
 
 
 async def main() -> int:
@@ -52,7 +55,11 @@ async def main() -> int:
     print(f"korpus : {service.vector_store.count()} chunk\n")
 
     summary = await run_agent_eval(
-        agent, suite.cases, judge_client=client, call_count=lambda: llm.call_count
+        agent,
+        suite.cases,
+        judge_client=client,
+        call_count=lambda: llm.call_count,
+        delay_seconds=CASE_DELAY_SECONDS,
     )
 
     for case in summary.results:

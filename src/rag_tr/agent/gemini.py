@@ -8,6 +8,9 @@ ayristirilmaz; sicaklik 0 ve ayristirma hatalarinda guvenli tarafa dusen
 varsayilanlar sayesinde davranis olabildigince deterministiktir.
 """
 
+import time
+
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -16,6 +19,10 @@ from rag_tr.agent.contracts import PassageAssessment, RetrievalDecision
 from rag_tr.contracts import Passage
 
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+# Free tier dakikada 5 istekle sinirli; kisa bir bekleyisle yeniden denemek
+# tum kosuyu bir kota hatasina kurban etmekten iyidir.
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY_SECONDS = 20.0
 
 
 class RetrievalDecisionOut(BaseModel):
@@ -90,11 +97,18 @@ class GeminiAgentLLM:
         *,
         temperature: float = 0.0,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+        sleep=time.sleep,
     ) -> None:
         self._client = client
         self.model = model
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
+        self._max_retries = max_retries
+        self._retry_delay_seconds = retry_delay_seconds
+        self._sleep = sleep
+        self.retry_count = 0
         self.call_count = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -112,6 +126,28 @@ class GeminiAgentLLM:
 
         return cls(genai.Client(api_key=settings.gemini_api_key), model=settings.gemini_agent_model)
 
+    def _is_retryable(self, exc: genai_errors.APIError) -> bool:
+        code = getattr(exc, "code", None)
+        if code is None:
+            return False
+        # promptevals'taki ayni mantik: Gemini'nin 4xx/5xx ayrimi
+        # yeniden-denenebilirlige gore degil, bu yuzden kod dogrudan bakilir.
+        return code == 429 or code >= 500
+
+    def _call_with_retry(self, prompt: str, config):
+        delay = self._retry_delay_seconds
+        for attempt in range(self._max_retries + 1):
+            try:
+                return self._client.models.generate_content(
+                    model=self.model, contents=prompt, config=config
+                )
+            except genai_errors.APIError as exc:
+                if not self._is_retryable(exc) or attempt == self._max_retries:
+                    raise
+                self.retry_count += 1
+                self._sleep(delay)
+                delay = min(delay * 2, 60.0)
+
     def _generate(self, system: str, prompt: str, schema: type[BaseModel] | None):
         self.call_count += 1
         config_kwargs = {
@@ -126,11 +162,8 @@ class GeminiAgentLLM:
         if schema is not None:
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_schema"] = schema
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(**config_kwargs),
-        )
+        config = types.GenerateContentConfig(**config_kwargs)
+        response = self._call_with_retry(prompt, config)
         usage = getattr(response, "usage_metadata", None)
         if usage is not None:
             self.input_tokens += getattr(usage, "prompt_token_count", 0) or 0

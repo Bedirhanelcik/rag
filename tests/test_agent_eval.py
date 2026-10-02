@@ -472,3 +472,32 @@ def test_shipped_suite_covers_the_required_behaviours():
     assert any(c.answer_regex for c in cases.values())
     assert any(c.expect_source for c in cases.values())
     assert any(c.judge for c in cases.values())
+
+
+def test_cases_are_paced_when_a_delay_is_configured():
+    """Free tier kota koruması: vakalar arasina bekleme konulabilmeli."""
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+
+    cases = [AgentCase(id=f"c{i}", question="q", expect_status="answered") for i in range(3)]
+    _run(
+        run_agent_eval(
+            FakeAgent(_answered_result()), cases, delay_seconds=45.0, sleep=_fake_sleep
+        )
+    )
+
+    assert slept == [45.0, 45.0], "ilk vakadan once beklenmemeli, aralarda beklenmeli"
+
+
+def test_no_pacing_by_default():
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+
+    cases = [AgentCase(id="a", question="q"), AgentCase(id="b", question="q")]
+    _run(run_agent_eval(FakeAgent(_answered_result()), cases, sleep=_fake_sleep))
+
+    assert slept == []

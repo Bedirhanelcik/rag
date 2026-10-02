@@ -285,3 +285,84 @@ def test_research_agent_skips_retrieval_with_a_single_gemini_call_for_the_decisi
     assert result.answer == "Merhaba!"
     assert tool.queries == []
     assert llm.call_count == 2
+
+
+class _RateLimitError(Exception):
+    """google.genai.errors.APIError yerine gecen, kod tasiyan sahte hata."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"HTTP {code}")
+        self.code = code
+
+
+class _FlakyModels(_FakeModels):
+    def __init__(self, failures: list[Exception], responses) -> None:
+        super().__init__(responses)
+        self._failures = list(failures)
+
+    def generate_content(self, *, model, contents, config):
+        if self._failures:
+            raise self._failures.pop(0)
+        return super().generate_content(model=model, contents=contents, config=config)
+
+
+class _FlakyClient:
+    def __init__(self, failures, responses) -> None:
+        self.models = _FlakyModels(failures, responses)
+
+
+def _flaky_llm(failures, responses, **kwargs):
+    slept: list[float] = []
+    llm = GeminiAgentLLM(
+        _FlakyClient(failures, responses),
+        model="gemini-2.5-flash",
+        sleep=slept.append,
+        retry_delay_seconds=0.01,
+        **kwargs,
+    )
+    return llm, slept
+
+
+def test_rate_limit_is_retried_without_failing_the_run(monkeypatch):
+    monkeypatch.setattr("rag_tr.agent.gemini.genai_errors.APIError", _RateLimitError)
+    llm, slept = _flaky_llm(
+        [_RateLimitError(429)], [_FakeResponse(RetrievalDecisionOut(needs_retrieval=True))]
+    )
+
+    decision = llm.needs_retrieval("Soru?")
+
+    assert decision.needs_retrieval is True
+    assert llm.retry_count == 1
+    assert len(slept) == 1
+
+
+def test_server_error_is_retried(monkeypatch):
+    monkeypatch.setattr("rag_tr.agent.gemini.genai_errors.APIError", _RateLimitError)
+    llm, _ = _flaky_llm(
+        [_RateLimitError(503)], [_FakeResponse(RetrievalDecisionOut(needs_retrieval=False))]
+    )
+
+    llm.needs_retrieval("Soru?")
+
+    assert llm.retry_count == 1
+
+
+def test_client_error_is_not_retried(monkeypatch):
+    monkeypatch.setattr("rag_tr.agent.gemini.genai_errors.APIError", _RateLimitError)
+    llm, _ = _flaky_llm([_RateLimitError(400)], [])
+
+    with pytest.raises(_RateLimitError):
+        llm.needs_retrieval("Soru?")
+
+    assert llm.retry_count == 0
+
+
+def test_retries_are_bounded(monkeypatch):
+    monkeypatch.setattr("rag_tr.agent.gemini.genai_errors.APIError", _RateLimitError)
+    llm, slept = _flaky_llm([_RateLimitError(429)] * 10, [], max_retries=2)
+
+    with pytest.raises(_RateLimitError):
+        llm.needs_retrieval("Soru?")
+
+    assert llm.retry_count == 2
+    assert len(slept) == 2

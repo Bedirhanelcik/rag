@@ -5,6 +5,7 @@ checker'larina verir. promptevals tarafinda RAG veya agent ici hakkinda hicbir
 bilgi yoktur; buradan ona yalnizca metin ve assertion config'i gider.
 """
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -122,13 +123,19 @@ async def run_agent_eval(
     *,
     judge_client=None,
     call_count: Callable[[], int] | None = None,
+    delay_seconds: float = 0.0,
+    sleep=asyncio.sleep,
 ) -> AgentEvalSummary:
     """Vakalari sirayla kosturur.
 
-    Kasitli olarak seri: free tier kota limitlerini zorlamamak ve canli kosuda
-    cagri sayisini ongorulebilir tutmak icin."""
+    Kasitli olarak seri. `delay_seconds` vakalar arasina bekleme koyar: Gemini
+    free tier dakikada 5 istekle sinirli ve her vaka 2-3 istek harciyor, bu
+    yuzden canli kosuda arka arkaya gitmek kotayi tuketiyor. Testlerde
+    varsayilan 0'dir, dolayisiyla bekleme olmaz."""
     results = []
-    for case in cases:
+    for index, case in enumerate(cases):
+        if index and delay_seconds > 0:
+            await sleep(delay_seconds)
         results.append(
             await evaluate_agent_case(
                 agent, case, judge_client=judge_client, call_count=call_count
