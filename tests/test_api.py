@@ -39,9 +39,14 @@ class _StubBM25:
         return self._size
 
 
+INGEST_TOKEN = "test-ingest-token"
+INGEST_HEADERS = {"Authorization": f"Bearer {INGEST_TOKEN}"}
+
+
 class _StubSettings:
     embedding_model_name = "fake-embed-model"
     top_k_final = 5
+    ingest_api_token = INGEST_TOKEN
 
 
 class StubService:
@@ -110,7 +115,7 @@ def test_health_reports_index_sizes(client):
 
 
 def test_ingest_saves_file_and_returns_counts(client, service, tmp_path):
-    response = client.post("/ingest", files={"files": ("notlar.txt", b"merhaba dunya", "text/plain")})
+    response = client.post("/ingest", files={"files": ("notlar.txt", b"merhaba dunya", "text/plain")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -132,7 +137,7 @@ def test_ingest_saves_file_and_returns_counts(client, service, tmp_path):
     ],
 )
 def test_ingest_strips_path_components_from_filename(client, service, tmp_path, filename):
-    response = client.post("/ingest", files={"files": (filename, b"veri", "text/plain")})
+    response = client.post("/ingest", files={"files": (filename, b"veri", "text/plain")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 200
     saved = service.ingested_paths[0][0]
@@ -141,14 +146,14 @@ def test_ingest_strips_path_components_from_filename(client, service, tmp_path, 
 
 
 def test_ingest_rejects_unsupported_extension(client, service):
-    response = client.post("/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")})
+    response = client.post("/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 400
     assert service.ingested_paths == []
 
 
 def test_ingest_rejects_empty_or_dotted_filename(client, service):
-    response = client.post("/ingest", files={"files": ("..", b"veri", "text/plain")})
+    response = client.post("/ingest", files={"files": ("..", b"veri", "text/plain")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 400
     assert service.ingested_paths == []
@@ -233,14 +238,14 @@ def test_retrieval_error_maps_to_500_with_code(tmp_path, monkeypatch):
 
 
 def test_unsupported_extension_reports_its_error_code(client):
-    response = client.post("/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")})
+    response = client.post("/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == ErrorCode.UNSUPPORTED_FILE_TYPE.value
 
 
 def test_invalid_filename_reports_its_error_code(client):
-    response = client.post("/ingest", files={"files": ("..", b"veri", "text/plain")})
+    response = client.post("/ingest", files={"files": ("..", b"veri", "text/plain")}, headers=INGEST_HEADERS)
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == ErrorCode.INVALID_FILENAME.value
@@ -258,3 +263,65 @@ def test_empty_question_is_rejected(client, service):
 
     assert response.status_code == 422
     assert service.queries == []
+
+
+# --- /ingest kimlik dogrulamasi ---
+
+
+def test_ingest_without_a_token_is_rejected(client, service):
+    response = client.post("/ingest", files={"files": ("a.txt", b"veri")})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == ErrorCode.UNAUTHORIZED.value
+    assert service.ingested_paths == [], "yetkisiz istek ingestion'a ulasmamali"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"Authorization": "Bearer yanlis-token"},
+        {"Authorization": f"Basic {INGEST_TOKEN}"},
+        {"Authorization": INGEST_TOKEN},
+        {"Authorization": "Bearer "},
+        {"X-Ingest-Token": INGEST_TOKEN},
+    ],
+)
+def test_ingest_rejects_a_wrong_or_malformed_token(client, service, header):
+    response = client.post("/ingest", files={"files": ("a.txt", b"veri")}, headers=header)
+
+    assert response.status_code == 401
+    assert service.ingested_paths == []
+
+
+def test_ingest_accepts_the_configured_token(client, service):
+    response = client.post(
+        "/ingest", files={"files": ("a.txt", b"veri")}, headers=INGEST_HEADERS
+    )
+
+    assert response.status_code == 200
+    assert [path.name for path in service.ingested_paths[0]] == ["a.txt"]
+
+
+def test_ingest_is_closed_when_no_token_is_configured(tmp_path, monkeypatch):
+    """Guvenli varsayilan: token tanimlanmamissa uc nokta hic hizmet vermez,
+    yapilandirilmamis bir dagitimda korpusa herkes yazamaz."""
+
+    class _NoTokenSettings(_StubSettings):
+        ingest_api_token = None
+
+    service = StubService()
+    service.settings = _NoTokenSettings()
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
+    local = TestClient(create_app(service=service))
+
+    response = local.post("/ingest", files={"files": ("a.txt", b"veri")})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == ErrorCode.INGEST_DISABLED.value
+    assert service.ingested_paths == []
+
+
+def test_ingest_token_defaults_to_unset_in_settings():
+    from rag_tr.config import Settings
+
+    assert Settings(_env_file=None).ingest_api_token is None

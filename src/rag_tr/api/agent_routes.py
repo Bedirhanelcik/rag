@@ -5,7 +5,7 @@ degerleri oldugu gibi aktarilir. Bu modul yalnizca ceviri ve hata eslemesi
 yapar.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.genai import errors as genai_errors
 
@@ -63,9 +63,23 @@ def _to_response(result: AgentResult) -> AgentAskResponse:
 @router.post("/ask", response_model=AgentAskResponse)
 async def ask(
     payload: AgentAskRequest,
+    request: Request,
     agent=Depends(get_agent),
     agent_factory=Depends(get_agent_factory),
 ) -> AgentAskResponse:
+    # Hic dokuman ingest edilmemisse agent'i hic calistirmayiz: bos korpusta
+    # cevap uretilemez ve bosa Gemini cagrisi yapilmis olur. Istemci bunu
+    # "sistem bozuk" ile karistirmasin diye ayri bir kod dondurulur.
+    service = request.app.state.service
+    if service.vector_store.count() == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=_error(
+                ErrorCode.CORPUS_EMPTY,
+                "Henüz hiç doküman ingest edilmedi, bu yüzden cevap üretilemez.",
+            ),
+        )
+
     # Istege ozel top_k yalnizca ayni LLM/tool'u paylasan hafif bir agent ile
     # uygulanir; RAGService ve embedding modeli asla yeniden kurulmaz.
     if payload.top_k is not None and payload.top_k != DEFAULT_TOP_K and agent_factory is not None:

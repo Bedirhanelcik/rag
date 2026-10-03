@@ -248,68 +248,167 @@ uv run --no-editable python scripts/agent_eval.py
 
 Testler tamamen fake LLM/RAG bileşenleriyle çalışır; normal test koşusu hiçbir API çağrısı yapmaz.
 
+## API
+
+Dört uç nokta var. Üretimde web arayüzü yalnızca `/agent/ask` ve `/health`
+kullanır; `/ingest` operatör ucudur, `/upload` ise dağıtımda kapalıdır.
+
+### `GET /health`
+
+Hiçbir model sağlayıcısına dokunmaz — agent tembel kurulduğu ve embedding
+istemcisi ilk kullanımda oluştuğu için **API anahtarı yanlış olsa bile** çalışır.
+Platform health check'i olarak kullanılabilir.
+
+```bash
+curl https://<servis>/health
+```
+
+```json
+{"status":"ok","embedding_model":"gemini-embedding-001","chunk_count":4,"keyword_index_size":4}
+```
+
+`chunk_count=0` **hata değildir**: henüz doküman ingest edilmediği anlamına gelir.
+
+### `POST /ingest` — operatör ingestion
+
+Kontrollü, token korumalı ingestion. Desteklenen türler: **`.pdf`, `.txt`, `.md`**.
+Multipart alan adı: **`files`** (tekrarlanabilir).
+
+**Varsayılan olarak kapalıdır:** `INGEST_API_TOKEN` tanımlı değilse uç nokta
+`503 ingest_disabled` döner. Böylece yapılandırılmamış bir dağıtımda korpusa
+herkes yazamaz. Token tanımlıysa `Authorization: Bearer <token>` beklenir;
+eksik/yanlış token `401 unauthorized` verir.
+
+```bash
+curl -X POST https://<servis>/ingest   -H "Authorization: Bearer $INGEST_API_TOKEN"   -F "files=@data/sample/osmanli_tarihi.md"   -F "files=@data/sample/turkiye_cografyasi.md"   -F "files=@data/sample/yapay_zeka_temelleri.md"
+```
+
+```json
+{"ingested_files":["osmanli_tarihi.md","turkiye_cografyasi.md","yapay_zeka_temelleri.md"],
+ "failed_files":[],"chunk_count":4}
+```
+
+Akış: dosya → metin çıkarma → chunk'lama → Gemini doküman embedding'i → Chroma
+→ BM25. **Çalışan sunucu üzerinden** ingest edildiği için Chroma ve bellekteki
+BM25 index'i aynı anda güncellenir. Ayrı bir Python process'i açıp Chroma'ya
+yazmak bunu sağlamaz: o durumda sunucunun BM25 index'i restart'a kadar eski
+kalır ve hibrit arama sessizce yalnız-vektör moduna düşer.
+
+### `POST /agent/ask` — üretim sorgu yolu
+
+```bash
+curl -X POST https://<servis>/agent/ask   -H "content-type: application/json"   -d '{"question":"Türkiye'"'"'nin en yüksek dağı hangisidir?"}'
+```
+
+Akış: soru → Gemini sorgu embedding'i → vektör arama + BM25 → RRF → bağlam →
+Gemini cevap üretimi → kaynaklar. Yanıt `answer`, `status`, `sources`, `steps`,
+`tool_calls` taşır. Anthropic bu zincirin hiçbir yerinde yok.
+
+Korpus boşsa agent hiç çalıştırılmaz ve `409 corpus_empty` döner — boşa Gemini
+çağrısı yapılmaz ve istemci bunu bir sistem hatasıyla karıştırmaz.
+
+### `POST /upload` — web kullanıcı yüklemesi
+
+`/ingest` ile karıştırılmamalı:
+
+| | `/ingest` | `/upload` |
+|---|---|---|
+Kim kullanır | operatör / admin | web arayüzü kullanıcısı |
+Koruma | `INGEST_API_TOKEN` (Bearer) | `UPLOAD_ENABLED` bayrağı |
+Varsayılan | kapalı (token yok → 503) | kapalı (`false` → 403) |
+Yanıt | toplam `chunk_count` | dosya başına `chunks_created` + `corpus_chunks` |
+
+`UPLOAD_ENABLED=false` iken `/upload` 403 döner ve ingestion'a hiç ulaşmaz.
+Dağıtımda kapalı kalmalıdır: korpus tüm ziyaretçiler arasında paylaşımlıdır,
+kullanıcı bazlı izolasyon yoktur.
+
 ## Dağıtım (deployment)
 
-İki ayrı deployable var: bu repodaki Python servisi (agent + RAG) ve ayrı bir
+İki ayrı deployable: bu repodaki Python servisi (agent + RAG) ve ayrı bir
 repodaki Next.js arayüzü. Tarayıcı **yalnızca** Next.js ile konuşur; model
-çağrıları ve her türlü sır sunucu tarafında kalır.
+çağrıları ve sırlar sunucu tarafında kalır.
 
 ```
-Tarayıcı → Next.js (Vercel) → /api/ask · /api/upload  →  FastAPI (Railway) → Gemini
+Tarayıcı → Next.js (Vercel) → /api/ask · /api/upload  →  FastAPI → Gemini
                                    (AGENT_API_URL, sunucu tarafı)
 ```
 
-### Python servisi
+### Başlatma
 
-`Dockerfile.api` ile çalışır. Üç nokta önemli:
+```
+uvicorn rag_tr.api.main:app --host 0.0.0.0 --port $PORT
+```
 
-- **Port:** platform `PORT` değişkenini verir; başlatma komutu
-  `uvicorn rag_tr.api.main:app --host 0.0.0.0 --port ${PORT:-8000}`.
-- **Kalıcılık:** Chroma tek kalıcılık noktasıdır (BM25 açılışta ondan yeniden
-  kurulur). `/data` dizinine bir volume bağlanıp `CHROMA_PERSIST_DIR=/data/chroma`
-  verilmelidir; aksi halde her dağıtım korpusu sıfırlar.
-- **Health check:** `GET /health` hiçbir model sağlayıcısına dokunmaz (agent
-  tembel kurulur), bu yüzden platform health check'i olarak güvenle kullanılır.
+Platform `PORT` değişkenini verir; `Dockerfile.api` bunu `${PORT:-8000}` ile
+karşılar. `GET /health` health check olarak kullanılır.
 
-**Embedding Gemini API üzerinden üretilir, yerel bir ML modeli yüklenmez.**
-Bunun nedeni bellek: `intfloat/multilingual-e5-small` 118M parametredir (250k
-sözlük yüzünden embedding matrisi tek başına ~384 MB fp32) ve
-`sentence-transformers` ile yüklendiğinde süreç RSS'i ölçülmüş değerlerle
-~1.26 GB'a çıkıyordu — 512 MB bellekli bir ortamda imkânsız. Gemini embedding
-API'si ile ölçülen açılış **~148 MB** (limitin %29'u) ve süreçte hiç ML çalışma
-zamanı yok. Hibrit retrieval mimarisi (Chroma + BM25 + RRF) aynen korundu;
-değişen tek şey vektörlerin nerede üretildiği.
+### Bellek — Render Free (512 MB)
 
-Sorgu ve pasajlar hâlâ asimetrik kodlanır: e5'teki `"query: "` / `"passage: "`
-öneklerinin Gemini karşılığı `task_type` alanıdır (`RETRIEVAL_QUERY` /
-`RETRIEVAL_DOCUMENT`). Vektörler L2-normalize edilir, böylece Chroma'nın
-varsayılan L2 uzaklığıyla sıralama cosine sıralamasıyla aynı kalır.
+Ölçülen açılış: **~148 MB (limitin %29'u)**. Bunun sebebi yerel bir ML modelinin
+hiç yüklenmemesi: embedding Gemini API üzerinden üretilir. Daha önce
+`sentence-transformers` + `intfloat/multilingual-e5-small` ile açılış 1.26 GB
+ölçülmüştü ve 512 MB'a sığmıyordu.
 
-> **Göç notu:** e5 ile üretilmiş eski vektörler 384 boyutluydu, yenileri 768.
-> Mevcut bir Chroma koleksiyonu varsa boyut uyuşmazlığı verir; dağıtımdan önce
-> koleksiyonu silip dokümanları bir kez yeniden ingest etmek gerekir.
+Açılışta **hiçbir Gemini çağrısı yapılmaz**: hem agent hem embedding istemcisi
+ilk kullanımda kurulur.
+
+### Kalıcılık — Render Free'de disk yok
+
+Chroma tek kalıcılık noktasıdır (BM25 açılışta ondan yeniden kurulur).
+`CHROMA_PERSIST_DIR` **relatif** verilirse process'in çalışma dizinine göre
+çözülür (Docker'da `/app/data/chroma`).
+
+**Render Free'de kalıcı disk bulunmaz.** Bu yüzden ingest edilen index
+container'ın geçici dosya sisteminde yaşar ve her **restart / redeploy /
+spin-down** sonrası kaybolur; `/health` yeniden `chunk_count=0` gösterir.
+
+> **Gereklilik:** Render Free'de her deploy sonrası `/ingest` çağrısını tekrar
+> çalıştırmanız gerekir. Örnek korpus için bu tek bir komut ve birkaç saniyedir.
+
+Bu bilinçli bir tasarım kararıdır: açılışta otomatik ingest **eklenmedi**, çünkü
+bu hem startup'ı uzatır hem de açılışta Gemini çağrısı yapmak anlamına gelir
+(health check'in anahtar gerektirmemesi ilkesini bozar).
+
+Kalıcı disk sunan bir ortamda (docker-compose, ücretli platformlar) `/data`
+dizinine volume bağlanıp `CHROMA_PERSIST_DIR=/data/chroma` verilir; `Dockerfile.api`
+bu dizini oluşturur ve `VOLUME ["/data"]` ilan eder. **Free planda bu yol
+kullanılamaz** ve kod kalıcı disk varmış gibi davranmaz.
+
+### Ortam değişkenleri (Render)
 
 | Değişken | Zorunlu | Varsayılan | Not |
 |---|---|---|---|
-| `GEMINI_API_KEY` | agent için evet | — | Yalnızca `/agent/ask` kullanır |
-| `GEMINI_AGENT_MODEL` | hayır | `gemini-2.5-flash` | |
-| `CHROMA_PERSIST_DIR` | dağıtımda evet | `data/chroma` | Volume yolu, örn. `/data/chroma` |
-| `UPLOAD_ENABLED` | hayır | `false` | **Dağıtımda kapalı kalmalı** (korpus paylaşımlı) |
-| `UPLOAD_MAX_BYTES` | hayır | `10485760` | 10 MiB |
-| `ALLOWED_ORIGINS` | hayır | boş | Boşsa CORS middleware eklenmez; önerilen kurulumda gerekmez |
-| `ANTHROPIC_API_KEY` | hayır | boş | Yalnızca eski `/query` yolu için |
-| `EMBEDDING_MODEL_NAME` | hayır | `gemini-embedding-001` | **Gemini embedding modeli** — HuggingFace adı değil |
-| `EMBEDDING_DIMENSIONS` | hayır | `768` | Vektör boyutu |
-| `CHUNK_*`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |
+| `GEMINI_API_KEY` | **evet** | — | Hem cevap üretimi hem embedding |
+| `GEMINI_AGENT_MODEL` | hayır | `gemini-2.5-flash` | `GEMINI_MODEL` **okunmaz** |
+| `EMBEDDING_MODEL_NAME` | hayır | `gemini-embedding-001` | Gemini modeli olmalı; HF adı verilirse net hata |
+| `EMBEDDING_DIMENSIONS` | hayır | `768` | |
+| `CHROMA_PERSIST_DIR` | hayır | `data/chroma` | Free'de kalıcı değil (yukarı bkz.) |
+| `INGEST_API_TOKEN` | **ingest için evet** | boş → kapalı | Güçlü rastgele değer; repoda tutulmaz |
+| `UPLOAD_ENABLED` | hayır | `false` | Dağıtımda kapalı kalmalı |
+| `UPLOAD_MAX_BYTES` | hayır | `10485760` | |
+| `ALLOWED_ORIGINS` | hayır | boş | Boşsa CORS middleware eklenmez |
+| `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | **hayır** | — | LEGACY, production'da gerekmez |
 
-Sırlar imaja girmez: hepsi ortam değişkeniyle verilir ve `.env`
-`.dockerignore` ile dışlanır.
+Sırlar imaja girmez: hepsi ortam değişkeniyle verilir, `.env` `.dockerignore`
+ile dışlanır.
+
+### Üretim bağımlılıkları
+
+`uv sync --frozen --no-dev` ile **95 paket** kurulur. İmajda bulunmayanlar:
+`torch`, `transformers`, `sentence-transformers` (Gemini embedding kullanıldığı
+için), `anthropic` ve `streamlit` (opsiyonel `legacy` extra'ya taşındı).
+
+`onnxruntime`, `chromadb`'nin koşulsuz bir gereksinimi olduğu için imajda yer
+alır; ancak `chromadb` import edildiğinde **yüklenmez** (ölçüldü), yani çalışma
+zamanı belleğine etkisi yoktur — yalnızca disk kaplar.
 
 ### Next.js arayüzü
 
-Vercel'de çalışır. Ortam değişkenleri arayüz reposunun README'sinde listelidir;
-özeti: `AGENT_API_URL` (sunucu tarafı, **asla** `NEXT_PUBLIC_` değil),
-`DEMO_MODE`, `UPLOAD_ENABLED`, ve herkese açık profil bağlantıları.
+Vercel'de çalışır; ortam değişkenleri arayüz reposunun README'sinde listelidir.
+Özeti: `AGENT_API_URL` (sunucu tarafı, **asla** `NEXT_PUBLIC_` değil),
+`DEMO_MODE`, `UPLOAD_ENABLED` ve herkese açık profil bağlantıları.
+
 
 ## Geliştirme Fikirleri
 

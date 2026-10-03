@@ -3009,7 +3009,6 @@ name = "rag-tr"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "anthropic" },
     { name = "chromadb" },
     { name = "fastapi" },
     { name = "google-genai" },
@@ -3020,8 +3019,13 @@ dependencies = [
     { name = "python-multipart" },
     { name = "rank-bm25" },
     { name = "requests" },
-    { name = "streamlit" },
     { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+legacy = [
+    { name = "anthropic" },
+    { name = "streamlit" },
 ]
 
 [package.dev-dependencies]
@@ -3032,7 +3036,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.34" },
+    { name = "anthropic", marker = "extra == 'legacy'", specifier = ">=0.34" },
     { name = "chromadb", specifier = ">=0.5" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-genai", specifier = ">=1.0.0" },
@@ -3042,9 +3046,10 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "requests", specifier = ">=2.32" },
-    { name = "streamlit", specifier = ">=1.38" },
+    { name = "streamlit", marker = "extra == 'legacy'", specifier = ">=1.38" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
+provides-extras = ["legacy"]
 
 [package.metadata.requires-dev]
 dev = [

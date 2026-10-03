@@ -12,11 +12,16 @@ from rag_tr.contracts import ErrorCode
 from rag_tr.service import IngestResult
 
 
+INGEST_TOKEN = "test-ingest-token"
+INGEST_HEADERS = {"Authorization": f"Bearer {INGEST_TOKEN}"}
+
+
 class _Settings:
     embedding_model_name = "fake-embed-model"
     top_k_final = 5
     upload_enabled = False
     upload_max_bytes = 1024
+    ingest_api_token = INGEST_TOKEN
 
     def __init__(self, origins: list[str] | None = None) -> None:
         self._origins = origins or []
@@ -163,7 +168,9 @@ def test_health_does_not_require_any_api_key(monkeypatch):
 def test_server_errors_do_not_leak_a_traceback():
     service = StubService(error=RuntimeError("chroma down: /secret/path/key=abc123"))
 
-    response = _client(service).post("/ingest", files={"files": ("a.txt", b"veri")})
+    response = _client(service).post(
+        "/ingest", files={"files": ("a.txt", b"veri")}, headers=INGEST_HEADERS
+    )
 
     assert response.status_code == 500
     text = response.text
@@ -175,7 +182,9 @@ def test_server_errors_do_not_leak_a_traceback():
 
 def test_error_responses_only_carry_a_code_and_a_message():
     response = _client(StubService()).post(
-        "/ingest", files={"files": ("kotu.exe", b"MZ", "application/octet-stream")}
+        "/ingest",
+        files={"files": ("kotu.exe", b"MZ", "application/octet-stream")},
+        headers=INGEST_HEADERS,
     )
 
     assert response.status_code == 400
@@ -285,3 +294,52 @@ def test_env_example_carries_no_real_secrets(env_file):
 
     assert "sk-ant-api" not in contents
     assert "AIza" not in contents
+
+
+# --- Anthropic production path'te yok ---
+
+
+def test_service_module_has_no_module_level_anthropic_import():
+    """`anthropic` artik opsiyonel bir bagimlilik; service modulu onu ust
+    seviyede import etmemeli, yoksa paket kurulu olmadan uygulama acilamaz."""
+    from pathlib import Path
+
+    source = Path("src/rag_tr/service.py").read_text(encoding="utf-8")
+    header = source.split("class RAGService", 1)[0]
+
+    assert "import anthropic" not in header, "ust seviyede anthropic import'u olmamali"
+
+
+def test_constructing_the_service_creates_no_llm_client(tmp_path):
+    """Acilista ne Anthropic ne Gemini istemcisi kurulur."""
+    from rag_tr.config import Settings
+    from rag_tr.retrieval.keyword_search import BM25Index
+    from rag_tr.retrieval.vector_store import VectorStore
+    from rag_tr.service import RAGService
+
+    settings = Settings(_env_file=None, chroma_persist_dir=str(tmp_path / "chroma"))
+    service = RAGService(
+        settings,
+        embedding_model=object(),
+        vector_store=VectorStore(settings.chroma_persist_dir),
+        bm25_index=BM25Index(),
+    )
+
+    assert service.client is None, "Anthropic istemcisi acilista kurulmamali"
+
+
+def test_anthropic_is_not_a_production_dependency():
+    import re
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    # Blogun tamami alinmali: "uvicorn[standard]" gibi bir girdi ic ice koseli
+    # parantez icerdigi icin basit bir "]" bolmesi blogu erken kesiyor.
+    match = re.search(r"^dependencies = \[(.*?)^\]", pyproject, re.S | re.M)
+    assert match, "dependencies blogu bulunamadi"
+    production_block = match.group(1)
+    assert "fastapi" in production_block, "yanlis blok yakalandi"
+
+    assert "anthropic" not in production_block, "anthropic uretim bagimliligi olmamali"
+    assert "streamlit" not in production_block, "streamlit uretim bagimliligi olmamali"
+    assert "sentence-transformers" not in production_block

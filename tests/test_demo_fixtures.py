@@ -274,14 +274,21 @@ def test_schema_rejects_a_fixture_without_the_synthetic_flag():
 
 def test_loading_fixtures_never_constructs_an_llm_client(monkeypatch):
     """Demo yolunun Gemini/Anthropic istemcisi kurmadigini kanitlar."""
-    import anthropic
     import google.genai
 
     def _explode(*args, **kwargs):
         raise AssertionError("demo yolunda LLM istemcisi kurulmamali")
 
     monkeypatch.setattr(google.genai, "Client", _explode)
-    monkeypatch.setattr(anthropic, "Anthropic", _explode)
+
+    # anthropic artik opsiyonel bir bagimlilik (legacy extra); kuruluysa onu da
+    # patlat, kurulu degilse zaten kurulma ihtimali yok.
+    try:
+        import anthropic
+    except ImportError:
+        pass
+    else:
+        monkeypatch.setattr(anthropic, "Anthropic", _explode)
 
     suite = load_fixtures(FIXTURES_PATH)
     for fixture in suite.fixtures:

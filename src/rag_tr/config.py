@@ -4,9 +4,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Bos varsayilan: agent-only dagitimda (yalnizca Gemini) anlamsiz bir dummy
-    # sir tutmak gerekmesin. Claude yolu (/query) bu key ile cagri yapar;
-    # bos birakilirsa yalnizca o cagri sirasinda kimlik hatasi alinir.
+    # LEGACY -- yalnizca eski /query ucu icin. Production path (web -> /agent/ask)
+    # Anthropic'i hic kullanmaz; `anthropic` paketi de artik uretim
+    # bagimliligi degil (opsiyonel `legacy` extra). Her ikisinin de varsayilani
+    # oldugu icin dagitimda tanimlanmasi gerekmez.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     # Embedding Gemini API uzerinden uretilir: yerel bir ML modeli
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     # arasinda paylasimli, yani kullanici izolasyonu yok. Yerel gelistirmede
     # UPLOAD_ENABLED=true ile acilir; dagitimda kapali kalmali.
     upload_enabled: bool = False
+    # /ingest operator ucudur ve varsayilan olarak KAPALIDIR: token tanimli
+    # degilse uc nokta hizmet vermez. Boylece yapilandirilmamis bir dagitimda
+    # korpusa herkes yazamaz.
+    ingest_api_token: str | None = None
     upload_max_bytes: int = 10 * 1024 * 1024
     # Virgulle ayrilmis frontend origin listesi. Bos birakilirsa CORS
     # middleware'i hic eklenmez: onerilen dagitimda tarayici backend'e dogrudan

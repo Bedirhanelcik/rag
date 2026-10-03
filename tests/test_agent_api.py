@@ -75,9 +75,22 @@ class FakeAgent:
         return self._result
 
 
+class _StubVectorStore:
+    """Agent uc noktasi, bos korpusta agent'i hic calistirmamak icin chunk
+    sayisina bakiyor."""
+
+    def __init__(self, count: int = 4) -> None:
+        self._count = count
+
+    def count(self) -> int:
+        return self._count
+
+
 class _StubService:
-    """Agent uc noktasi servise dokunmaz; yalnizca create_app'in gercek
-    RAGService kurmasini engellemek icin var."""
+    """Agent uc noktasinin dokundugu yuzey: yalnizca vector_store.count()."""
+
+    def __init__(self, chunk_count: int = 4) -> None:
+        self.vector_store = _StubVectorStore(chunk_count)
 
 
 @pytest.fixture
@@ -374,3 +387,29 @@ def test_creating_the_app_does_not_build_an_agent():
 
     assert app.state.agent is None
     assert app.state.agent_factory is None
+
+
+# --- bos korpus ---
+
+
+def test_empty_corpus_returns_a_clear_error_without_running_the_agent():
+    """Hic dokuman ingest edilmemisse agent hic calistirilmaz: bosa Gemini
+    cagrisi yapilmaz ve istemci bunu "sistem bozuk" ile karistirmaz."""
+    agent = FakeAgent()
+    local = TestClient(create_app(service=_StubService(chunk_count=0), agent=agent))
+
+    response = local.post("/agent/ask", json={"question": "Başkent neresi?"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == ErrorCode.CORPUS_EMPTY.value
+    assert "ingest" in detail["message"].lower()
+    assert agent.questions == [], "agent hic cagrilmamali"
+
+
+def test_non_empty_corpus_runs_the_agent():
+    agent = FakeAgent()
+    local = TestClient(create_app(service=_StubService(chunk_count=1), agent=agent))
+
+    assert local.post("/agent/ask", json={"question": "soru"}).status_code == 200
+    assert agent.questions == ["soru"]

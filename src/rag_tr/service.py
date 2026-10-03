@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-
-import anthropic
+from typing import Any
 
 from rag_tr.config import Settings
 from rag_tr.contracts import (
@@ -35,7 +34,7 @@ class RAGService:
         embedding_model: EmbeddingModel | None = None,
         vector_store: VectorStore | None = None,
         bm25_index: BM25Index | None = None,
-        client: anthropic.Anthropic | None = None,
+        client: Any | None = None,
     ) -> None:
         """Bagimliliklar test edilebilirlik icin enjekte edilebilir; verilmezse
         uretim davranisi aynen korunur (gercek model, kalici store, gercek client)."""
@@ -47,7 +46,11 @@ class RAGService:
         )
         self.vector_store = vector_store or VectorStore(settings.chroma_persist_dir)
         self.bm25_index = bm25_index or BM25Index()
-        self.client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        # Anthropic client'i acilista KURULMAZ. Production path (web ->
+        # /agent/ask -> ResearchAgent -> Gemini) Anthropic'e hic dokunmuyor;
+        # yalnizca eski /query ucu icin, ilk cagrida tembel kurulur. Boylece
+        # `anthropic` paketi uretim bagimliligi olmaktan cikiyor.
+        self.client = client
         self.rebuild_keyword_index()
 
     def rebuild_keyword_index(self) -> int:
@@ -147,6 +150,24 @@ class RAGService:
         ]
         return RetrievalResult(status=RetrievalStatus.FOUND, passages=passages)
 
+    def _legacy_client(self) -> Any:
+        """Eski /query ucunun Claude istemcisini ilk kullanimda kurar.
+
+        `anthropic` artik opsiyonel bir bagimliliktir (`legacy` extra), bu
+        yuzden import burada yapilir ve paket yoksa ne yapilacagini soyleyen
+        net bir hata verilir. Production path bu fonksiyona hic ugramaz."""
+        if self.client is not None:
+            return self.client
+        try:
+            import anthropic
+        except ImportError as exc:  # pragma: no cover - uretimde bu yol kullanilmaz
+            raise GenerationError(
+                "Eski /query ucu `anthropic` paketini gerektiriyor; kurulu degil. "
+                "Production akisi icin /agent/ask kullanin."
+            ) from exc
+        self.client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+        return self.client
+
     def query(self, question: str, top_k: int) -> AnswerResult:
         """Retrieval + Claude generation. Retrieval ve generation hatalarini ayri
         tiplere sararak yukari tasir; boylece API katmani (ve onu tool olarak
@@ -158,6 +179,8 @@ class RAGService:
 
         chunks = [chunk for chunk, _score in scored]
         try:
-            return generate_answer(question, chunks, self.client, self.settings.anthropic_model)
+            return generate_answer(
+                question, chunks, self._legacy_client(), self.settings.anthropic_model
+            )
         except Exception as exc:
             raise GenerationError(str(exc)) from exc

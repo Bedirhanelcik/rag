@@ -1,3 +1,4 @@
+import secrets
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
@@ -37,9 +38,39 @@ def _safe_filename(raw: str | None) -> str:
     return name
 
 
+def _require_ingest_token(request: Request, settings) -> None:
+    """/ingest operator ucudur ve varsayilan olarak KAPALIDIR.
+
+    `INGEST_API_TOKEN` tanimli degilse uc nokta hic hizmet vermez: boylece
+    yapilandirilmamis bir dagitimda korpusa herkes yazamaz. Token tanimliysa
+    `Authorization: Bearer <token>` basligi beklenir ve karsilastirma zamanlama
+    sizintisina kapali yapilir."""
+    expected = getattr(settings, "ingest_api_token", None)
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail=_error(
+                ErrorCode.INGEST_DISABLED,
+                "Ingest uç noktası kapalı. Sunucu tarafında INGEST_API_TOKEN tanımlayın.",
+            ),
+        )
+
+    header = request.headers.get("authorization", "")
+    scheme, _, supplied = header.partition(" ")
+    if scheme.lower() != "bearer" or not secrets.compare_digest(supplied.strip(), expected):
+        raise HTTPException(
+            status_code=401,
+            detail=_error(
+                ErrorCode.UNAUTHORIZED,
+                "Geçersiz veya eksik ingest token'ı.",
+            ),
+        )
+
+
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest(request: Request, files: list[UploadFile]) -> IngestResponse:
     service = request.app.state.service
+    _require_ingest_token(request, service.settings)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     saved_paths = []

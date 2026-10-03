@@ -62,6 +62,11 @@ class ErrorCode(str, Enum):
     # Upload uc noktasi icin.
     UPLOAD_DISABLED = "upload_disabled"
     FILE_TOO_LARGE = "file_too_large"
+    # Ingest uc noktasi icin.
+    UNAUTHORIZED = "unauthorized"
+    INGEST_DISABLED = "ingest_disabled"
+    # Hic dokuman ingest edilmemisse.
+    CORPUS_EMPTY = "corpus_empty"
 
 
 class RetrievalError(RuntimeError):

@@ -15,9 +15,14 @@ from rag_tr.contracts import ErrorCode
 from rag_tr.service import IngestResult
 
 
+INGEST_TOKEN = "test-ingest-token"
+INGEST_HEADERS = {"Authorization": f"Bearer {INGEST_TOKEN}"}
+
+
 class _StubSettings:
     embedding_model_name = "fake-embed-model"
     top_k_final = 5
+    ingest_api_token = INGEST_TOKEN
 
     def __init__(self, *, upload_enabled: bool = True, upload_max_bytes: int = 1024) -> None:
         self.upload_enabled = upload_enabled
@@ -253,7 +258,9 @@ def test_existing_ingest_endpoint_still_works_and_ignores_the_flag(upload_dir):
     """/ingest davranisi degismedi: upload bayragi onu etkilemez."""
     service = StubService(upload_enabled=False)
 
-    response = _client(service).post("/ingest", files={"files": ("a.txt", b"veri")})
+    response = _client(service).post(
+        "/ingest", files={"files": ("a.txt", b"veri")}, headers=INGEST_HEADERS
+    )
 
     assert response.status_code == 200
     body = response.json()
