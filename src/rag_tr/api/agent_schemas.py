@@ -7,9 +7,10 @@ Trace yalnizca kapali bir enum olan aksiyon etiketi ve kisa bir ozet detay
 tasir -- dusunce zinciri (chain-of-thought) hicbir alanda bulunmaz.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from rag_tr.agent.contracts import AgentAction, AgentStatus, ToolStatus
+from rag_tr.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language
 
 
 class AgentAskRequest(BaseModel):
@@ -17,6 +18,28 @@ class AgentAskRequest(BaseModel):
     # ge=1: top_k=0 sessizce varsayilana dusmek yerine acik bir dogrulama
     # hatasi verir (mevcut /query sozlesmesiyle ayni kural).
     top_k: int | None = Field(default=None, ge=1)
+    # Cevabin dili. Istemci gondermezse korpusun dili kullanilir.
+    # Retrieval bu alandan etkilenmez: arama sorgusu her zaman korpus
+    # dilinde uretilir, yalnizca cevap ve gerekceler bu dile cevrilir.
+    language: str = Field(default=DEFAULT_LANGUAGE)
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        """Desteklenen bir dil koduna indirger.
+
+        `en-US` gibi bolgeli kodlar kabul edilip dil kismina indirgenir;
+        hic desteklenmeyen bir dil ise sessizce varsayilana dusmek yerine
+        acik bir dogrulama hatasi verir. Sessiz dusus, arayuzde bir yazim
+        hatasini gorunmez kilardi."""
+        raw = (value or DEFAULT_LANGUAGE).strip()
+        normalized = normalize_language(raw)
+        base = raw.replace("_", "-").split("-")[0].lower()
+        if base and base != normalized:
+            raise ValueError(
+                f"desteklenmeyen dil: {raw!r}; desteklenenler: {', '.join(SUPPORTED_LANGUAGES)}"
+            )
+        return normalized
 
 
 class AgentSourceItem(BaseModel):

@@ -22,7 +22,8 @@ from rag_tr.agent.contracts import (
     ToolStatus,
 )
 from rag_tr.agent.tools import SearchTool
-from rag_tr.contracts import NO_CONTEXT_MESSAGE, Passage
+from rag_tr.contracts import Passage
+from rag_tr.i18n import DEFAULT_LANGUAGE, get_language_pack
 
 DEFAULT_TOP_K = 5
 DEFAULT_MAX_SEARCHES = 2
@@ -61,6 +62,7 @@ class ResearchAgent:
         *,
         top_k: int = DEFAULT_TOP_K,
         max_searches: int = DEFAULT_MAX_SEARCHES,
+        language: str = DEFAULT_LANGUAGE,
     ) -> None:
         if max_searches < 1:
             raise ValueError("max_searches en az 1 olmali")
@@ -68,6 +70,14 @@ class ResearchAgent:
         self._tool = search_tool
         self._top_k = top_k
         self._max_searches = max_searches
+        # Kullaniciya gorunen adim detaylari ve sabit cevaplar buradan gelir.
+        # Modelin urettigi gerekceler ise zaten dogru dilde gelir: dil
+        # direktifi LLM'in system prompt'una ekleniyor.
+        self._pack = get_language_pack(language)
+
+    @property
+    def language(self) -> str:
+        return self._pack.code
 
     def run(self, question: str) -> AgentResult:
         steps: list[Step] = []
@@ -78,7 +88,11 @@ class ResearchAgent:
             Step(
                 action=AgentAction.ASSESSED_QUESTION,
                 detail=_trim(decision.reason)
-                or ("arama gerekli" if decision.needs_retrieval else "arama gerekmiyor"),
+                or (
+                    self._pack.search_needed
+                    if decision.needs_retrieval
+                    else self._pack.search_not_needed
+                ),
             )
         )
 
@@ -86,7 +100,7 @@ class ResearchAgent:
             steps.append(
                 Step(
                     action=AgentAction.ANSWERED_WITHOUT_RETRIEVAL,
-                    detail="dokuman aramasi yapilmadan cevaplandi",
+                    detail=self._pack.answered_without_retrieval,
                 )
             )
             return AgentResult(
@@ -117,17 +131,19 @@ class ResearchAgent:
             steps.append(
                 Step(
                     action=AgentAction.SEARCHED_RAG,
-                    detail=f"deneme {attempt}: {len(outcome.passages)} pasaj bulundu",
+                    detail=self._pack.searched_attempt.format(
+                        attempt=attempt, count=len(outcome.passages)
+                    ),
                 )
             )
 
             if outcome.status is ToolStatus.FAILED:
                 # Retrieval katmani hatasi: RAG sozlesmesine gore tekrar denemek
                 # anlamli degil, dongu burada kesilir.
-                detail = _trim(f"retrieval tool hatasi: {outcome.error}")
+                detail = _trim(self._pack.tool_error.format(error=outcome.error))
                 steps.append(Step(action=AgentAction.TOOL_FAILED, detail=detail))
                 return AgentResult(
-                    answer="Belge aramasi sirasinda bir hata olustu, bu nedenle cevap üretilemedi.",
+                    answer=self._pack.tool_failure,
                     status=AgentStatus.TOOL_FAILURE,
                     sources=[],
                     steps=steps,
@@ -152,7 +168,7 @@ class ResearchAgent:
             steps.append(
                 Step(
                     action=AgentAction.REFINED_QUERY,
-                    detail=_trim(assessment.reason) or "sorgu yeniden formullendi",
+                    detail=_trim(assessment.reason) or self._pack.query_refined,
                 )
             )
 
@@ -161,7 +177,7 @@ class ResearchAgent:
             steps.append(
                 Step(
                     action=AgentAction.ANSWERED_FROM_CONTEXT,
-                    detail=f"{len(grounded)} pasaj temel alinarak cevaplandi",
+                    detail=self._pack.answered_from_context.format(count=len(grounded)),
                 )
             )
             return AgentResult(
@@ -175,11 +191,13 @@ class ResearchAgent:
         steps.append(
             Step(
                 action=AgentAction.DECLARED_INSUFFICIENT_CONTEXT,
-                detail=f"{len(tool_calls)} arama sonrasi yeterli baglam bulunamadi",
+                detail=self._pack.insufficient_after_searches.format(
+                    searches=len(tool_calls)
+                ),
             )
         )
         return AgentResult(
-            answer=NO_CONTEXT_MESSAGE,
+            answer=self._pack.no_context,
             status=AgentStatus.INSUFFICIENT_CONTEXT,
             sources=[],
             steps=steps,

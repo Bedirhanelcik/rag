@@ -14,6 +14,7 @@ from rag_tr.agent.gemini import GeminiAgentLLM
 from rag_tr.agent.loop import ResearchAgent
 from rag_tr.agent.tools import RagSearchTool
 from rag_tr.contracts import ErrorCode
+from rag_tr.i18n import DEFAULT_LANGUAGE
 
 _build_lock = threading.Lock()
 
@@ -45,8 +46,9 @@ def get_agent(request: Request) -> ResearchAgent:
 
 
 def get_agent_factory(request: Request):
-    """Istege ozel top_k icin, ayni LLM ve arama tool'unu paylasan bir agent
-    uretir. Enjekte edilmis (fake) agent'larda bulunmaz, None doner."""
+    """Istege ozel top_k ve dil icin, ayni LLM ve arama tool'unu paylasan
+    bir agent uretir. Enjekte edilmis (fake) agent'larda bulunmaz, None
+    doner."""
     return getattr(request.app.state, "agent_factory", None)
 
 
@@ -65,7 +67,16 @@ def _build_agent(app):
     llm = GeminiAgentLLM.from_env(settings)
     tool = RagSearchTool(service)
 
-    def factory(top_k: int) -> ResearchAgent:
-        return ResearchAgent(llm=llm, search_tool=tool, top_k=top_k)
+    def factory(top_k: int, language: str = DEFAULT_LANGUAGE) -> ResearchAgent:
+        # RAGService, embedding modeli ve Gemini client PAYLASILIR: istek
+        # basina yeniden kurulan sey yalnizca ince bir dongu nesnesi ve
+        # system prompt'una dil direktifi eklenmis bir LLM sarmalayicisi.
+        # Dolayisiyla dil destegi ek bir model cagrisi uretmez.
+        return ResearchAgent(
+            llm=llm.for_language(language),
+            search_tool=tool,
+            top_k=top_k,
+            language=language,
+        )
 
     return ResearchAgent(llm=llm, search_tool=tool), factory

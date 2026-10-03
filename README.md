@@ -361,6 +361,30 @@ Gemini cevap üretimi → kaynaklar. Yanıt `answer`, `status`, `sources`, `step
 Korpus boşsa agent hiç çalıştırılmaz ve `409 corpus_empty` döner — boşa Gemini
 çağrısı yapılmaz ve istemci bunu bir sistem hatasıyla karıştırmaz.
 
+**Cevap dili.** İstek isteğe bağlı bir `language` alanı taşır: `tr`, `en`, `fr`,
+`ar`, `es`, `zh`, `hi`. Verilmezse korpusun dili (`tr`) kullanılır;
+desteklenmeyen bir dil `422 invalid_request` döner (`en-US` gibi bölgeli kodlar
+kabul edilip dil kısmına indirgenir).
+
+```bash
+curl -X POST localhost:8000/agent/ask -H "content-type: application/json"   -d '{"question":"Quand l'"'"'Empire ottoman a-t-il été fondé ?","language":"fr"}'
+```
+
+Dil yalnızca **cevabı** ve kullanıcıya görünen gerekçeleri etkiler. Arama
+sorgusu her zaman **korpusun dilinde** üretilir, çünkü BM25 tam token eşleşmesi
+yapıyor: Fransızca yazılmış bir sorgu Türkçe bir dokümanı anahtar kelimeyle
+bulamaz ve hibrit aramanın yarısı kör kalırdı. Canlı doğrulamada bu ayrım
+görülebiliyor — Arapça, Hintçe, Çince ve Fransızca sorularda cevap kullanıcının
+dilinde geldi, `tool_calls[].query` ise her defasında Türkçe üretildi
+(`Osmanlı Devleti kuruluş tarihi`), atıflar (`[osmanli_tarihi.md::0]`)
+çevrilmeden korundu.
+
+Dil desteği **ek bir model çağrısı üretmez**: soru başka bir dile çevrilip geri
+çevrilmiyor, yalnızca mevcut çağrıların system prompt'una tek cümlelik bir
+direktif ekleniyor. Dil paketleri `src/rag_tr/i18n.py` içinde durur; kod
+tarafından üretilen kullanıcı metinleri (adım detayları, bağlam bulunamadı
+mesajı) de oradan gelir.
+
 ### Hata gövdesi — tek sözleşme
 
 Her hata, nereden geldiğine bakılmaksızın aynı şekli taşır:

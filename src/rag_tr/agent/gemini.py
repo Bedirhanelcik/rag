@@ -17,6 +17,12 @@ from pydantic import BaseModel, Field
 from rag_tr.agent.config import AgentSettings
 from rag_tr.agent.contracts import PassageAssessment, RetrievalDecision
 from rag_tr.contracts import Passage
+from rag_tr.i18n import (
+    CORPUS_LANGUAGE_NAME,
+    DEFAULT_LANGUAGE,
+    LanguagePack,
+    get_language_pack,
+)
 
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # Free tier dakikada 5 istekle sinirli; kisa bir bekleyisle yeniden denemek
@@ -45,44 +51,67 @@ class SynthesisOut(BaseModel):
     answer: str
 
 
+# System prompt'lar kasitli olarak Ingilizce ve dil-notr yazildi: ayni prompt
+# yedi arayuz dili icin kullaniliyor ve sonuna o dilin direktifi ekleniyor.
+# Onceki surum "Bir Turkce soru-cevap asistanisin" diyordu; modele Turkce
+# asistan oldugunu soyleyip Fransizca cevap istemek celisikti.
+#
+# Arama sorgusu ile cevap dili AYRILIR. Sorgu korpusun dilinde (Turkce)
+# uretilir -- BM25 tam token esleymesi yaptigi icin baska bir dilde yazilmis
+# bir sorgu anahtar kelime tarafini tamamen kor birakir. Cevap ve kullaniciya
+# gorunen gerekceler ise kullanicinin sectigi dilde uretilir.
+
 _DECIDE_SYSTEM = (
-    "Bir Türkçe doküman arşivi üzerinde çalışan araştırma ajanının karar "
-    "birimisin. Verilen soruyu cevaplamak için arşivde arama yapılması gerekip "
-    "gerekmediğine karar ver. Selamlama, sohbet, saf matematik veya biçim "
-    "değiştirme istekleri için arama gerekmez; olgusal, tarihsel, coğrafi veya "
-    "teknik bilgi isteyen sorular için gerekir. Arama gerekiyorsa, soruyu "
-    "anahtar kelimelere indirgeyen kısa bir arama sorgusu üret. Gerekçeyi tek "
-    "kısa cümleyle yaz."
+    "You are the decision unit of a research agent working over a document "
+    "archive. Decide whether the archive must be searched to answer the given "
+    "question. Greetings, small talk, pure arithmetic and formatting requests "
+    "need no search; questions asking for factual, historical, geographical or "
+    "technical information do. If a search is needed, produce a short search "
+    f"query reduced to keywords, written in {CORPUS_LANGUAGE_NAME}, because the "
+    "archive is written in that language and keyword matching is literal. "
+    "Give the reason in one short sentence."
 )
 
 _ASSESS_SYSTEM = (
-    "Bir araştırma ajanının değerlendirme birimisin. Verilen pasajların soruyu "
-    "cevaplamaya yeterli olup olmadığına karar ver. Pasajlar soruyu doğrudan "
-    "cevaplıyorsa sufficient=true. Yetersizse sufficient=false ver ve daha iyi "
-    "sonuç getirebileceğini düşündüğün farklı bir arama sorgusu öner "
-    "(refined_query); yeni bir fikrin yoksa refined_query'yi boş bırak. "
-    "Tahminde bulunma, yalnızca verilen metne bak. Gerekçeyi tek kısa cümleyle yaz."
+    "You are the assessment unit of a research agent. Decide whether the given "
+    "passages are sufficient to answer the question. If they answer it "
+    "directly, set sufficient=true. If not, set sufficient=false and suggest a "
+    "different search query (refined_query) that could retrieve better "
+    f"results, written in {CORPUS_LANGUAGE_NAME} like the archive; leave "
+    "refined_query empty when you have no new idea. Do not guess; look only at "
+    "the text you were given. Give the reason in one short sentence."
 )
 
 _SYNTHESIZE_SYSTEM = (
-    "Bir Türkçe soru-cevap asistanısın. Cevabını YALNIZCA sana verilen "
-    "pasajlardaki bilgiye dayandır. Her iddianın sonuna, bilgiyi aldığın "
-    "pasajın kimliğini köşeli parantez içinde ekle, örneğin [dosya.md::0]. "
-    "Yalnızca sana verilen pasaj kimliklerini kullan; yeni kaynak uydurma ve "
-    "pasajlarda bulunmayan bilgi ekleme. Kısa ve doğrudan cevap ver."
+    "You are a question answering assistant. Base your answer ONLY on the "
+    "passages you were given. After each claim, append the identifier of the "
+    "passage the information came from in square brackets, for example "
+    "[file.md::0]. Use only the passage identifiers you were given; never "
+    "invent a source and never add information that is not in the passages. "
+    "Keep passage identifiers, file names and numbers exactly as they appear; "
+    "do not translate or reformat them. Answer briefly and directly."
 )
 
 _DIRECT_SYSTEM = (
-    "Türkçe konuşan yardımcı bir asistansın. Bu soru doküman araması "
-    "gerektirmiyor. Kısa ve doğrudan cevap ver. Olgusal bir iddiada "
-    "bulunmuyorsan kaynak gösterme."
+    "You are a helpful assistant. This question needs no document search. "
+    "Answer briefly and directly. Do not cite sources unless you are making a "
+    "factual claim."
 )
+
+
+def _with_language(system: str, pack: LanguagePack) -> str:
+    """Dil direktifini system prompt'un sonuna ekler.
+
+    Sonda duruyor cunku modeller son talimati daha guclu takip ediyor. Tek bir
+    cumle oldugu icin token maliyeti ihmal edilebilir ve ek bir API cagrisi
+    gerektirmez: dil destegi cagri sayisini degistirmez."""
+    return system + "\n\n" + pack.directive
 
 
 def _format_passages(passages: list[Passage]) -> str:
     lines = []
     for passage in passages:
-        page = f", sayfa {passage.page_number}" if passage.page_number is not None else ""
+        page = f", page {passage.page_number}" if passage.page_number is not None else ""
         lines.append(f"[{passage.chunk_id}] ({passage.source_file}{page}): {passage.text}")
     return "\n\n".join(lines)
 
@@ -100,9 +129,11 @@ class GeminiAgentLLM:
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
         sleep=time.sleep,
+        language: str = DEFAULT_LANGUAGE,
     ) -> None:
         self._client = client
         self.model = model
+        self._pack = get_language_pack(language)
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
         self._max_retries = max_retries
@@ -112,6 +143,29 @@ class GeminiAgentLLM:
         self.call_count = 0
         self.input_tokens = 0
         self.output_tokens = 0
+
+    @property
+    def language(self) -> str:
+        return self._pack.code
+
+    def for_language(self, language: str) -> "GeminiAgentLLM":
+        """Ayni client'i paylasan, baska dilde cevap veren bir kopya dondurur.
+
+        Istek basina yeni bir Gemini client kurulmaz; yalnizca system prompt'a
+        eklenen direktif degisir. Sayaclar paylasilmaz: her kopya kendi cagri
+        sayisini tutar."""
+        if get_language_pack(language).code == self._pack.code:
+            return self
+        return GeminiAgentLLM(
+            self._client,
+            self.model,
+            temperature=self._temperature,
+            max_output_tokens=self._max_output_tokens,
+            max_retries=self._max_retries,
+            retry_delay_seconds=self._retry_delay_seconds,
+            sleep=self._sleep,
+            language=language,
+        )
 
     @classmethod
     def from_env(cls, settings: AgentSettings | None = None) -> "GeminiAgentLLM":
@@ -171,14 +225,18 @@ class GeminiAgentLLM:
         return response
 
     def needs_retrieval(self, question: str) -> RetrievalDecision:
-        response = self._generate(_DECIDE_SYSTEM, f"Soru: {question}", RetrievalDecisionOut)
+        response = self._generate(
+            _with_language(_DECIDE_SYSTEM, self._pack),
+            f"Question: {question}",
+            RetrievalDecisionOut,
+        )
         parsed = getattr(response, "parsed", None)
         if not isinstance(parsed, RetrievalDecisionOut):
             # Ayristirma basarisiz: aramayi denemek, cevabi uydurmaktan guvenli.
             return RetrievalDecision(
                 needs_retrieval=True,
                 search_query=None,
-                reason="karar ayrıştırılamadı, arama yapılıyor",
+                reason=self._pack.decision_unparsed,
             )
         return RetrievalDecision(
             needs_retrieval=parsed.needs_retrieval,
@@ -189,16 +247,20 @@ class GeminiAgentLLM:
     def assess_passages(self, question: str, passages: list[Passage]) -> PassageAssessment:
         if not passages:
             # Degerlendirilecek metin yok; API cagrisi harcamadan karar verilir.
-            return PassageAssessment(sufficient=False, refined_query=None, reason="pasaj bulunamadı")
+            return PassageAssessment(
+                sufficient=False, refined_query=None, reason=self._pack.no_passages_found
+            )
 
-        prompt = f"Soru: {question}\n\nPasajlar:\n{_format_passages(passages)}"
-        response = self._generate(_ASSESS_SYSTEM, prompt, PassageAssessmentOut)
+        prompt = f"Question: {question}\n\nPassages:\n{_format_passages(passages)}"
+        response = self._generate(
+            _with_language(_ASSESS_SYSTEM, self._pack), prompt, PassageAssessmentOut
+        )
         parsed = getattr(response, "parsed", None)
         if not isinstance(parsed, PassageAssessmentOut):
             return PassageAssessment(
                 sufficient=False,
                 refined_query=None,
-                reason="değerlendirme ayrıştırılamadı",
+                reason=self._pack.assessment_unparsed,
             )
         return PassageAssessment(
             sufficient=parsed.sufficient,
@@ -208,11 +270,13 @@ class GeminiAgentLLM:
 
     def synthesize(self, question: str, passages: list[Passage]) -> str:
         prompt = (
-            f"Soru: {question}\n\n"
-            f"Kullanabileceğin pasajlar (yalnızca bu kimlikleri kaynak göster):\n"
+            f"Question: {question}\n\n"
+            f"Passages you may use (cite only these identifiers):\n"
             f"{_format_passages(passages)}"
         )
-        response = self._generate(_SYNTHESIZE_SYSTEM, prompt, SynthesisOut)
+        response = self._generate(
+            _with_language(_SYNTHESIZE_SYSTEM, self._pack), prompt, SynthesisOut
+        )
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, SynthesisOut):
             return parsed.answer
@@ -222,5 +286,7 @@ class GeminiAgentLLM:
         return (getattr(response, "text", "") or "").strip()
 
     def answer_directly(self, question: str) -> str:
-        response = self._generate(_DIRECT_SYSTEM, f"Soru: {question}", None)
+        response = self._generate(
+            _with_language(_DIRECT_SYSTEM, self._pack), f"Question: {question}", None
+        )
         return (getattr(response, "text", "") or "").strip()

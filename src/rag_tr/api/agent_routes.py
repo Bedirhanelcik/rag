@@ -22,6 +22,7 @@ from rag_tr.api.agent_schemas import (
 )
 from rag_tr.api.deps import get_agent, get_agent_factory
 from rag_tr.contracts import ErrorCode
+from rag_tr.i18n import DEFAULT_LANGUAGE
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,14 @@ async def ask(
             ),
         )
 
-    # Istege ozel top_k yalnizca ayni LLM/tool'u paylasan hafif bir agent ile
-    # uygulanir; RAGService ve embedding modeli asla yeniden kurulmaz.
-    if payload.top_k is not None and payload.top_k != DEFAULT_TOP_K and agent_factory is not None:
-        agent = agent_factory(payload.top_k)
+    # Istege ozel top_k ve dil yalnizca ayni LLM/tool'u paylasan hafif bir
+    # agent ile uygulanir; RAGService ve embedding modeli asla yeniden
+    # kurulmaz. Varsayilan dil ve varsayilan top_k ile gelen istekler
+    # singleton agent'i kullanir, yani sicak yol degismedi.
+    wants_top_k = payload.top_k is not None and payload.top_k != DEFAULT_TOP_K
+    wants_language = payload.language != DEFAULT_LANGUAGE
+    if (wants_top_k or wants_language) and agent_factory is not None:
+        agent = agent_factory(payload.top_k or DEFAULT_TOP_K, payload.language)
 
     try:
         # ResearchAgent.run() senkron ve bloklayici (Gemini istekleri + yerel

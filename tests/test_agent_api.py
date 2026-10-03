@@ -18,6 +18,7 @@ from rag_tr.agent.contracts import (
     ToolStatus,
 )
 from rag_tr.api import agent_routes, deps
+from rag_tr.agent.loop import DEFAULT_TOP_K
 from rag_tr.api.main import create_app
 from rag_tr.contracts import NO_CONTEXT_MESSAGE, ErrorCode, Passage
 
@@ -291,11 +292,11 @@ def test_valid_top_k_is_accepted(client):
 
 def test_custom_top_k_uses_the_factory_without_rebuilding_the_service(agent):
     """Istege ozel top_k, ayni LLM/tool'u paylasan hafif bir agent uretmeli."""
-    built: list[int] = []
+    built: list[tuple[int, str]] = []
     custom = FakeAgent()
 
-    def factory(top_k: int):
-        built.append(top_k)
+    def factory(top_k: int, language: str = "tr"):
+        built.append((top_k, language))
         return custom
 
     app = create_app(service=_StubService(), agent=agent)
@@ -304,15 +305,45 @@ def test_custom_top_k_uses_the_factory_without_rebuilding_the_service(agent):
 
     local.post("/agent/ask", json={"question": "soru", "top_k": 2})
 
-    assert built == [2]
+    assert built == [(2, "tr")]
     assert custom.questions == ["soru"]
     assert agent.questions == [], "varsayilan agent bu istekte kullanilmamali"
+
+
+def test_a_non_default_language_is_passed_through_to_the_factory(agent):
+    """Secilen dil, istek basina kurulan agent'a gecmeli."""
+    built: list[tuple[int, str]] = []
+    custom = FakeAgent()
+
+    def factory(top_k: int, language: str = "tr"):
+        built.append((top_k, language))
+        return custom
+
+    app = create_app(service=_StubService(), agent=agent)
+    app.state.agent_factory = factory
+    local = TestClient(app)
+
+    local.post("/agent/ask", json={"question": "soru", "language": "fr"})
+
+    assert built == [(DEFAULT_TOP_K, "fr")], "dil fabrikaya varsayilan top_k ile gecmeli"
+    assert custom.questions == ["soru"]
+
+
+def test_an_unsupported_language_is_rejected_before_the_agent_runs(agent):
+    app = create_app(service=_StubService(), agent=agent)
+    local = TestClient(app)
+
+    response = local.post("/agent/ask", json={"question": "soru", "language": "de"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_request"
+    assert agent.questions == [], "gecersiz dilde agent hic calismamali"
 
 
 def test_default_top_k_does_not_use_the_factory(agent):
     built: list[int] = []
     app = create_app(service=_StubService(), agent=agent)
-    app.state.agent_factory = lambda top_k: built.append(top_k)
+    app.state.agent_factory = lambda top_k, language="tr": built.append(top_k)
     local = TestClient(app)
 
     local.post("/agent/ask", json={"question": "soru"})

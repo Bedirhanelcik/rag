@@ -148,10 +148,13 @@ def test_synthesize_prompt_lists_the_allowed_chunk_ids_and_grounding_rule():
     call = client.models.calls[0]
     assert "cografya.md::0" in call["contents"]
     assert "tarih.md::3" in call["contents"]
-    assert "sayfa 7" in call["contents"]
+    assert "page 7" in call["contents"]
     system = call["config"].system_instruction
-    assert "yalnızca" in system.lower()
-    assert "uydurma" in system.lower()
+    # Prompt artik dil-notr (Ingilizce) ve sonuna dil direktifi ekleniyor;
+    # garantiler ayni: yalnizca verilen pasajlar ve kaynak uydurma yasagi.
+    assert "only on the passages" in system.lower()
+    assert "never invent a source" in system.lower()
+    assert system.rstrip().endswith("Kullanıcıya Türkçe cevap ver.")
 
 
 def test_synthesize_falls_back_to_plain_text_when_parsing_fails():
