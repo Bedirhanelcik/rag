@@ -417,6 +417,30 @@ Yanıt | toplam `chunk_count` | dosya başına `chunks_created` + `corpus_chunks
 Dağıtımda kapalı kalmalıdır: korpus tüm ziyaretçiler arasında paylaşımlıdır,
 kullanıcı bazlı izolasyon yoktur.
 
+### `GET /documents` · `DELETE /documents/{ad}` · `POST /documents/reset`
+
+Korpus yönetimi. Arayüzdeki doküman alanı bu üç ucu kullanır.
+
+```bash
+curl -s localhost:8000/documents
+# {"documents":[{"source_file":"osmanli_tarihi.md","chunk_count":1}, ...],
+#  "total_chunks":4,"keyword_index_size":4,"can_modify":true}
+
+curl -X DELETE localhost:8000/documents/osmanli_tarihi.md
+curl -X POST   localhost:8000/documents/reset
+```
+
+**Listeleme herkese açıktır** — yalnızca dosya adları ve chunk sayıları döner,
+içerik dönmez ve hiçbir şey değiştirmez. **Silme ve sıfırlama `UPLOAD_ENABLED`
+bayrağına bağlıdır**: korpus ziyaretçiler arasında paylaşımlı olduğu için
+"yükleyebilen silebilir" kuralı uygulanır. `INGEST_API_TOKEN` bu uçlara hiç
+girmez; o token yalnızca operatör ucu `/ingest`e aittir ve tarayıcıya ulaşmaz.
+
+Silme HER İKİ indeksi birden günceller. Yalnızca Chroma'dan silmek, kullanıcı
+dokümanı kaldırdığını sanarken anahtar kelime aramasının onu döndürmeye devam
+etmesi demek olurdu; `can_modify` alanı da arayüzün var olmayan bir eylemi
+sunmaması için döndürülür.
+
 ## Dağıtım (deployment)
 
 İki ayrı deployable: bu repodaki Python servisi (agent + RAG) ve ayrı bir

@@ -19,6 +19,14 @@ from rag_tr.retrieval.keyword_search import BM25Index
 from rag_tr.retrieval.vector_store import VectorStore, make_chunk_id
 
 
+@dataclass(frozen=True)
+class DocumentSummary:
+    """Korpustaki tek bir dokumanin ozeti."""
+
+    source_file: str
+    chunk_count: int
+
+
 @dataclass
 class IngestResult:
     ingested_files: list[str]
@@ -94,6 +102,43 @@ class RAGService:
             ingested.append(path.name)
 
         return IngestResult(ingested_files=ingested, failed_files=failed, chunk_count=total_chunks)
+
+    def list_documents(self) -> list["DocumentSummary"]:
+        """Korpustaki dokumanlari ve chunk sayilarini dondurur.
+
+        Tek kaynak-of-truth vektor deposu: BM25 zaten ondan kuruluyor, bu
+        yuzden ayri bir dokuman tablosu tutulmuyor. Liste dosya adina gore
+        siralanir ki arayuzde sira her istekte degismesin."""
+        counts: dict[str, int] = {}
+        for chunk in self.vector_store.all_chunks():
+            counts[chunk.source_file] = counts.get(chunk.source_file, 0) + 1
+        return [
+            DocumentSummary(source_file=name, chunk_count=count)
+            for name, count in sorted(counts.items())
+        ]
+
+    def remove_document(self, source_file: str) -> int:
+        """Bir dokumani HER IKI indeksten birden siler.
+
+        Yalnizca Chroma'dan silmek BM25'i eski haliyle birakirdi: kullanici
+        dokumani kaldirdigini sanarken anahtar kelime aramasi onu dondurmeye
+        devam ederdi. Dondurulen deger silinen chunk sayisidir; 0 ise boyle bir
+        dokuman yoktu."""
+        removed = sum(
+            1 for chunk in self.vector_store.all_chunks() if chunk.source_file == source_file
+        )
+        if removed == 0:
+            return 0
+        self.vector_store.delete_by_source(source_file)
+        self.bm25_index.remove_by_source(source_file)
+        return removed
+
+    def reset_corpus(self) -> int:
+        """Korpusu tamamen bosaltir ve silinen chunk sayisini dondurur."""
+        removed = 0
+        for document in self.list_documents():
+            removed += self.remove_document(document.source_file)
+        return removed
 
     def _retrieve_chunks(
         self, question: str, top_k: int, source_file: str | None = None

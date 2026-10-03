@@ -69,6 +69,7 @@ class ErrorCode(str, Enum):
     CORPUS_EMPTY = "corpus_empty"
     # Framework kaynakli hatalar da ayni govdeye cevrilir (api/errors.py).
     INVALID_REQUEST = "invalid_request"
+    DOCUMENT_NOT_FOUND = "document_not_found"
     NOT_FOUND = "not_found"
     METHOD_NOT_ALLOWED = "method_not_allowed"
     HTTP_ERROR = "http_error"

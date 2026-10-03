@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from rag_tr.api.agent_routes import router as agent_router
+from rag_tr.api.document_routes import router as document_router
 from rag_tr.api.errors import register_error_handlers
 from rag_tr.api.routes import router
 from rag_tr.api.upload_routes import router as upload_router
@@ -61,6 +62,7 @@ def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     app.include_router(router)
     app.include_router(agent_router)
     app.include_router(upload_router)
+    app.include_router(document_router)
     return app
 
 
