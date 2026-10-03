@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from rag_tr.api.agent_routes import router as agent_router
 from rag_tr.api.document_routes import router as document_router
 from rag_tr.api.errors import register_error_handlers
+from rag_tr.api.openapi import build_openapi
 from rag_tr.api.routes import router
 from rag_tr.api.upload_routes import router as upload_router
 from rag_tr.config import Settings
@@ -63,6 +64,9 @@ def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     app.include_router(agent_router)
     app.include_router(upload_router)
     app.include_router(document_router)
+    # Dosya alanlarinin Swagger UI'da "Choose File" olarak cikmasi icin:
+    # ayrinti icin rag_tr.api.openapi.
+    app.openapi = lambda: build_openapi(app)
     return app
 
 

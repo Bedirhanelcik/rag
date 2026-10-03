@@ -12,7 +12,7 @@ oldugu gibi kullanilir. Bu uc noktanin `/ingest`e ekledigi uc sey var:
   3. Dosya basina sonuc: filename + chunks_created + status.
 """
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 # Guvenlik mantigi tek yerde kalsin diye sanitizer kopyalanmiyor. Modul
@@ -36,7 +36,9 @@ def _too_large(name: str, limit: int) -> HTTPException:
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload(request: Request, files: list[UploadFile]) -> UploadResponse:
+async def upload(
+    request: Request, files: list[UploadFile] = File(...)
+) -> UploadResponse:
     service = request.app.state.service
     settings = service.settings
 

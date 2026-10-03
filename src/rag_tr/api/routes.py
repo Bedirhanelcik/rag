@@ -1,7 +1,7 @@
 import secrets
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from rag_tr.api.schemas import (
@@ -68,7 +68,9 @@ def _require_ingest_token(request: Request, settings) -> None:
 
 
 @router.post("/ingest", response_model=IngestResponse)
-async def ingest(request: Request, files: list[UploadFile]) -> IngestResponse:
+async def ingest(
+    request: Request, files: list[UploadFile] = File(...)
+) -> IngestResponse:
     service = request.app.state.service
     _require_ingest_token(request, service.settings)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
