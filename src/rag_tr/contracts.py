@@ -67,6 +67,12 @@ class ErrorCode(str, Enum):
     INGEST_DISABLED = "ingest_disabled"
     # Hic dokuman ingest edilmemisse.
     CORPUS_EMPTY = "corpus_empty"
+    # Framework kaynakli hatalar da ayni govdeye cevrilir (api/errors.py).
+    INVALID_REQUEST = "invalid_request"
+    NOT_FOUND = "not_found"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+    HTTP_ERROR = "http_error"
+    INTERNAL_ERROR = "internal_error"
 
 
 class RetrievalError(RuntimeError):

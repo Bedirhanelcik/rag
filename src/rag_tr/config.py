@@ -1,4 +1,9 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Yapilandirmada beklenen embedding modeli. `retrieval.embeddings` ayni degeri
+#: kendi varsayilani olarak tasir; buradaki yalnizca hata mesaji icin.
+_EXPECTED_EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 class Settings(BaseSettings):
@@ -35,6 +40,30 @@ class Settings(BaseSettings):
     # middleware'i hic eklenmez: onerilen dagitimda tarayici backend'e dogrudan
     # konusmaz, istekler Next.js sunucu tarafindan proxy'lenir.
     allowed_origins: str = ""
+
+    @field_validator("embedding_model_name")
+    @classmethod
+    def _validate_embedding_model(cls, value: str) -> str:
+        """Yerel (HuggingFace) model adini acilista reddet.
+
+        Onceki surum embedding'i yerel bir `sentence-transformers` modeliyle
+        uretiyordu ve `EMBEDDING_MODEL_NAME` bir HuggingFace adiydi. O deger
+        ortamda kalirsa uygulama sorunsuz aciliyor, `/health` "ok" donuyor ve
+        hata ancak ilk embedding cagrisinda -- yani ilk kullanici sorusunda --
+        ortaya cikiyor. Yapilandirma hatasi acilista gorulmeli: bozuk bir
+        dagitim trafigi hic almasin."""
+        name = value.strip()
+        if not name:
+            raise ValueError(
+                f"EMBEDDING_MODEL_NAME bos olamaz; ornek: {_EXPECTED_EMBEDDING_MODEL}"
+            )
+        if "/" in name:
+            raise ValueError(
+                f"EMBEDDING_MODEL_NAME bir Gemini embedding modeli olmali, "
+                f"HuggingFace model adi degil (verilen: {name!r}). "
+                f"Ornek: {_EXPECTED_EMBEDDING_MODEL}"
+            )
+        return name
 
     @property
     def allowed_origin_list(self) -> list[str]:

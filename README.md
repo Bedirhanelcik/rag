@@ -1,6 +1,6 @@
 # Türkçe RAG Soru-Cevap Uygulaması
 
-Türkçe dokümanlar (PDF, TXT, MD) üzerinde kaynak göstererek soru cevaplayan bir Retrieval-Augmented Generation (RAG) uygulaması. FastAPI tabanlı bir API, Streamlit tabanlı bir arayüz, hibrit (vektör + anahtar kelime) arama ve Claude ile yanıt üretimi içerir.
+Türkçe dokümanlar (PDF, TXT, MD) üzerinde kaynak göstererek soru cevaplayan bir Retrieval-Augmented Generation (RAG) uygulaması. FastAPI tabanlı bir API, hibrit (vektör + anahtar kelime) arama, aramanın gerekip gerekmediğine kendisi karar veren bir araştırma agent'ı ve Gemini ile yanıt üretimi içerir. Arayüz ayrı bir Next.js deposunda (`agent-lab-web`) durur; bu depodaki Streamlit uygulaması artık opsiyonel `legacy` eki olarak korunuyor.
 
 ## Problem Tanımı
 
@@ -17,7 +17,7 @@ graph TD
     subgraph Ingestion["Ingestion"]
         F["PDF / TXT / MD dosyası"] --> L["loaders.py<br/>load_document"]
         L --> C["chunker.py<br/>chunk_text<br/>(chunk_size=1000, overlap=150)"]
-        C --> E["EmbeddingModel<br/>(intfloat/multilingual-e5-small)"]
+        C --> E["EmbeddingModel<br/>(gemini-embedding-001, 768 boyut)"]
         E --> VS["VectorStore<br/>(ChromaDB)"]
         C --> BM["BM25Index<br/>(rank-bm25, bellekte;<br/>açılışta Chroma'dan kurulur)"]
     end
@@ -33,21 +33,29 @@ graph TD
 
     subgraph Generation["Generation"]
         TOPK --> CTX["format_context<br/>(prompts.py)"]
-        CTX --> CLAUDE["Claude API<br/>(anthropic_model)"]
-        CLAUDE --> ANS["AnswerResult<br/>(answer, sources, used_chunk_ids)"]
+        CTX --> GEN["Gemini API<br/>(gemini_agent_model)"]
+        GEN --> ANS["AnswerResult<br/>(answer, sources, used_chunk_ids)"]
     end
+
+    subgraph Agent["Research agent"]
+        AG["ResearchAgent<br/>ASSESS → SEARCH → INSPECT<br/>→ REFINE → ANSWER"]
+        AG --> RT["rag_search tool<br/>(RAGService.retrieve)"]
+        AG --> AGEN["Gemini API<br/>(gemini_agent_model)"]
+    end
+    RT --> Q
 
     subgraph API["FastAPI"]
         ING_EP["POST /ingest"] --> C
-        Q_EP["POST /query"] --> Q
+        Q_EP["POST /query<br/>(eski, opsiyonel)"] --> Q
         ANS --> Q_EP
+        ASK_EP["POST /agent/ask<br/>(üretim yolu)"] --> AG
         HEALTH["GET /health"]
     end
 
-    subgraph UI["Streamlit UI"]
-        UPLOAD["Doküman Yükle"] --> ING_EP
-        ASK["Soru sor"] --> Q_EP
-        Q_EP --> RESULT["Yanıt + kaynak alıntıları"]
+    subgraph UI["Next.js arayüzü (ayrı depo)"]
+        UPLOAD["Doküman yükle"] --> ING_EP
+        ASK["Soru sor"] --> ASK_EP
+        ASK_EP --> RESULT["Cevap + karar izi + pasajlar"]
     end
 
     VS --> VSQ
@@ -58,10 +66,12 @@ Kod tabanındaki bileşen dizini:
 
 - `src/rag_tr/ingestion/` — `loaders.py` (PDF/TXT/MD okuma), `chunker.py` (parçalama)
 - `src/rag_tr/retrieval/` — `embeddings.py`, `vector_store.py` (ChromaDB), `keyword_search.py` (BM25), `hybrid.py` (RRF)
-- `src/rag_tr/generation/` — `answerer.py`, `prompts.py` (Claude çağrısı, sistem prompt'u)
-- `src/rag_tr/api/` — `main.py` (FastAPI uygulaması), `routes.py` (`/ingest`, `/query`, `/health`), `schemas.py` (Pydantic modelleri)
+- `src/rag_tr/generation/` — `answerer.py`, `prompts.py` (yanıt üretimi, sistem prompt'u)
+- `src/rag_tr/agent/` — `research_agent.py` (ASSESS → SEARCH → INSPECT → REFINE → ANSWER durum makinesi), `gemini_llm.py`, `tools.py`, `contracts.py`
+- `src/rag_tr/api/` — `main.py` (uygulama fabrikası, CORS, hata işleyicileri), `routes.py` (`/ingest`, `/query`, `/upload`, `/health`), `agent_routes.py` (`/agent/ask`), `errors.py` (tek tip hata gövdesi), `schemas.py`
 - `src/rag_tr/service.py` — yukarıdaki bileşenleri birleştiren `RAGService`
-- `ui/streamlit_app.py` — Streamlit arayüzü
+- `scripts/ingest.py` — dağıtım sonrası korpusa doküman ekleyen operatör aracı
+- `ui/streamlit_app.py` — eski Streamlit arayüzü (opsiyonel `legacy` eki)
 
 ## Kurulum
 
@@ -69,15 +79,26 @@ Kod tabanındaki bileşen dizini:
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) paket yöneticisi
-- Geçerli bir Anthropic API anahtarı (yanıt üretimi için)
+- Bir Gemini API anahtarı ([Google AI Studio](https://aistudio.google.com/apikey) ücretsiz katmanı yeterlidir)
+
+Üretim yolunda tek sağlayıcı Gemini'dir: hem cevap üretimi (`gemini-2.5-flash`) hem de
+embedding (`gemini-embedding-001`) aynı anahtarla çalışır. Anthropic artık yalnızca
+eski `POST /query` uç noktasının kullandığı opsiyonel bir ek paket (`legacy` extra);
+üretim bağımlılıkları arasında yer almaz ve kurulmadığında uygulama normal çalışır.
 
 ### Adımlar
 
 1. Bağımlılıkları yükleyin:
 
    ```bash
-   uv sync
+   uv sync --no-editable
    ```
+
+   `--no-editable` bilinçli bir tercih: depo OneDrive altında ve yolunda Türkçe karakter
+   bulunan bir dizinde durduğunda editable kurulumun ürettiği `.pth` dosyası Windows'un
+   cp1254 kod sayfasıyla okunamıyor ve içe aktarma kırılıyor. Kaynak dosyaları
+   değiştirdikten sonra kurulu kopyayı yenilemek için
+   `uv sync --no-editable --reinstall-package rag_tr` çalıştırın.
 
 2. `.env` dosyasını oluşturun ve doldurun:
 
@@ -85,7 +106,13 @@ Kod tabanındaki bileşen dizini:
    cp .env.example .env
    ```
 
-   `.env` içindeki `ANTHROPIC_API_KEY` alanına **gerçek bir Anthropic API anahtarı** girmeniz gerekir — `.env.example`'daki `sk-ant-your-key-here` yalnızca bir yer tutucudur ve onunla uygulama soru yanıtlayamaz (yalnızca `/health` uç noktası ve doküman yükleme çalışır, `/query` Claude API'ye gerçek bir anahtarla istek atar). Diğer alanlar (`ANTHROPIC_MODEL`, `EMBEDDING_MODEL_NAME`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_VECTOR`, `TOP_K_KEYWORD`, `TOP_K_FINAL`, `RRF_K`, `CHROMA_PERSIST_DIR`) için makul varsayılanlar zaten tanımlıdır, gerekmedikçe değiştirmenize gerek yoktur.
+   Zorunlu tek alan `GEMINI_API_KEY`'dir. Anahtar yalnızca ortamdan okunur; depoya,
+   Docker image'ına veya loglara hiçbir zaman yazılmaz. Diğer alanlar
+   (`GEMINI_AGENT_MODEL`, `EMBEDDING_MODEL_NAME`, `EMBEDDING_DIMENSIONS`, `CHUNK_SIZE`,
+   `CHUNK_OVERLAP`, `TOP_K_VECTOR`, `TOP_K_KEYWORD`, `TOP_K_FINAL`, `RRF_K`,
+   `CHROMA_PERSIST_DIR`, `UPLOAD_ENABLED`, `INGEST_API_TOKEN`, `ALLOWED_ORIGINS`) makul
+   varsayılanlarla gelir; üretim değerleri için [Dağıtım](#dağıtım-deployment)
+   bölümüne bakın.
 
 3. API'yi başlatın:
 
@@ -93,30 +120,46 @@ Kod tabanındaki bileşen dizini:
    uv run uvicorn rag_tr.api.main:app --port 8000
    ```
 
-4. Ayrı bir terminalde Streamlit arayüzünü başlatın:
+4. Doküman ekleyin ve soru sorun — uç noktaların tamamı [API](#api) bölümünde:
 
    ```bash
-   uv run streamlit run ui/streamlit_app.py
+   # korpusa doküman ekleme (operatör yolu, token gerektirir)
+   RAG_API_URL=http://localhost:8000 INGEST_API_TOKEN=... uv run python scripts/ingest.py data/raw
+
+   # agent'a soru sorma
+   curl -s localhost:8000/agent/ask -H 'content-type: application/json'      -d '{"question": "Osmanlı Devleti hangi yılda kuruldu?"}'
    ```
 
-   Arayüz varsayılan olarak `http://localhost:8000` adresindeki API'ye bağlanır (`API_URL` ortam değişkeniyle değiştirilebilir).
+5. Web arayüzü ayrı bir depoda (`agent-lab-web`, Next.js). Yalnızca `AGENT_API_URL`
+   ortam değişkeniyle bu API'ye bağlanır; ayrıntılar
+   [Next.js arayüzü](#nextjs-arayüzü) bölümünde.
 
-### Alternatif: Docker Compose
+### Alternatif: Docker
 
-API'yi ve UI'ı ayrı container'larda çalıştırmak için:
+API container'ı `Dockerfile.api` ile build edilir:
 
 ```bash
-docker compose up --build
+docker build -f Dockerfile.api -t rag-tr-api .
+docker run --rm -p 8000:8000 -e GEMINI_API_KEY=... -v "$PWD/data:/app/data" rag-tr-api
 ```
 
-Bu komut `Dockerfile.api` ve `Dockerfile.ui`'yi build eder; API `8000`, UI `8501` portunda yayına açılır ve UI, `API_URL=http://api:8000` üzerinden API container'ına bağlanır. `.env` dosyası `env_file: .env` ile API container'ına aktarılır, bu nedenle Docker ile çalıştırmadan önce de yukarıdaki 2. adımdaki gibi `.env` içine geçerli bir `ANTHROPIC_API_KEY` girilmiş olmalıdır. Veriler (`./data`) API container'ına volume olarak bağlanır, böylece Chroma index'i container yeniden başlatıldığında kaybolmaz.
+Secret'lar image'a gömülmez, çalışma zamanında ortam değişkeni olarak geçirilir.
+`data/` dizini volume olarak bağlanır; böylece Chroma index'i container yeniden
+başladığında kaybolmaz. Eski Streamlit arayüzünü de ayağa kaldıran
+`docker compose up --build` hâlâ çalışır ama Streamlit artık opsiyonel `legacy`
+ek paketine bağlı ve üretim yolunun parçası değil.
 
 ## Kullanım
 
 ### Arayüz üzerinden
 
-1. Streamlit sayfasının sol panelindeki **"Doküman Yükle"** alanından bir veya birden fazla PDF/TXT/MD dosyası seçip **"Yükle"** butonuna basın. Kaç dosyanın işlendiği ve kaç chunk oluşturulduğu bilgisi ekranda gösterilir.
-2. Ana ekrandaki soru kutusuna Türkçe bir soru yazıp **"Sor"** butonuna basın (örn. *"Osmanlı Devleti hangi yılda kuruldu?"*). Yanıt, altında numaralandırılmış kaynak alıntılarıyla (dosya adı, varsa sayfa numarası) birlikte gösterilir.
+Web arayüzü ayrı bir depoda duruyor (`agent-lab-web`, Next.js). `AGENT_API_URL` bu API'yi
+gösterecek şekilde ayarlandığında Playground sayfasındaki soru alanı `/agent/ask`'e gider
+ve cevabı, agent'ın karar izini, yaptığı tool çağrılarını ve dayandığı pasajları birlikte
+gösterir. Yükleme paneli yalnızca sunucuda `UPLOAD_ENABLED=true` ise etkindir.
+
+Bu depodaki `ui/streamlit_app.py` eski arayüzdür; `uv sync --extra legacy` ile kurulabilir
+ama üretim yolunun parçası değildir.
 
 ### API üzerinden (curl örnekleri)
 
@@ -179,7 +222,7 @@ curl http://localhost:8000/health
 ```
 
 ```json
-{"status": "ok", "embedding_model": "intfloat/multilingual-e5-small", "chunk_count": 12, "keyword_index_size": 12}
+{"status": "ok", "embedding_model": "gemini-embedding-001", "chunk_count": 12, "keyword_index_size": 12}
 ```
 
 ### Makine-okunur sözleşme (agent entegrasyonu için)
@@ -189,13 +232,13 @@ curl http://localhost:8000/health
 | `status` | Anlamı |
 |---|---|
 | `answered` | Bağlamdan kaynak göstererek cevap üretildi; `sources` ve `used_chunk_ids` doludur. |
-| `no_relevant_context` | Hiç doküman yüklenmemiş, retrieval sonuç döndürmemiş veya Claude bağlamda cevap olmadığına karar vermiş. `answer` alanı `"Dokümanlarda bu bilgi yok."`, `sources`/`used_chunk_ids` boş listedir. |
+| `no_relevant_context` | Hiç doküman yüklenmemiş, retrieval sonuç döndürmemiş veya model bağlamda cevap olmadığına karar vermiş. `answer` alanı `"Dokümanlarda bu bilgi yok."`, `sources`/`used_chunk_ids` boş listedir. |
 
 Hata durumlarında HTTP gövdesi `{"detail": {"code": ..., "message": ...}}` şeklindedir ve `code` sabit bir değerdir (`src/rag_tr/contracts.py`):
 
 | HTTP | `code` | Anlamı |
 |---|---|---|
-| 502 | `generation_error` | Claude (upstream) çağrısı başarısız — yeniden denemek anlamlı olabilir. |
+| 502 | `generation_error` | Model (upstream) çağrısı başarısız — yeniden denemek anlamlı olabilir. |
 | 500 | `retrieval_error` | Embedding/vektör deposu/keyword index tarafında hata — yeniden denemek genelde yardımcı olmaz. |
 | 400 | `invalid_filename` | Dosya adı boş, `.` veya `..`. |
 | 400 | `unsupported_file_type` | Uzantı `.pdf`/`.txt`/`.md` dışında. |
@@ -207,10 +250,21 @@ Hata durumlarında HTTP gövdesi `{"detail": {"code": ..., "message": ...}}` şe
 Salt vektör (embedding) araması, anlamsal olarak yakın metinleri iyi yakalar ama nadir geçen terimlerde, özel adlarda ve tam eşleşme gerektiren ifadelerde (örneğin bir kişi adı, bir tarih, bir teknik terim) zayıf kalabilir; embedding modeli bu tür token'ları genel bir anlam uzayına sıkıştırdığı için ayırt ediciliği kaybedebilir. BM25 gibi klasik bir anahtar kelime araması ise tam token eşleşmesinde güçlüdür ama çekim ekleri farklı olan kelimeleri (örn. "başkenti" vs. "başkentidir") yakalayamaz — geliştirme sürecinde `keyword_search.py` üzerinde yapılan manuel doğrulama tam olarak bunu gösterdi: BM25Okapi exact-token eşleşmesi yaptığından, sorgudaki bir kelimenin dokümandaki çekimli hali skor üretmiyor ve o chunk sonuç listesinden düşüyordu. Bu iki yöntem birbirinin zayıf noktalarını tamamlıyor: BM25'in kaçırdığı çekimli/eş anlamlı ifadeleri vektör araması anlamsal benzerlikle yakalıyor, vektör aramanın "bulanıklaştırdığı" özel adları/nadir terimleri ise BM25 tam eşleşmeyle yakalıyor. Bu yüzden ikisinin sonuçları ayrı ayrı alınıp `reciprocal_rank_fusion` ile birleştiriliyor.
 
 **Neden `chunk_size=1000` / `overlap=150`?**
-1000 karakterlik chunk boyutu, Türkçe dokümanlardaki ortalama bir paragrafın (birkaç cümlelik bir fikir birimi) tamamını tek bir chunk içinde tutacak kadar büyük, ama chunk içine alakasız birden fazla konuyu sıkıştırmayacak kadar da küçük tutulmuştur — bu da hem embedding modelinin (`intfloat/multilingual-e5-small`, kısa-orta uzunlukta metinler için optimize edilmiş, sınırlı bağlam penceresine sahip bir model) tek bir chunk'ı anlamlı şekilde temsil edebilmesini, hem de yanıt üretimi sırasında Claude'a gönderilen bağlamın gereksiz yere şişmemesini sağlar. 150 karakterlik overlap ise, bir cümlenin veya fikrin tam chunk sınırında bölünüp bağlamının iki parçaya dağılmasını engeller; bir chunk'ın sonunda yarım kalan bir bilginin bir sonraki chunk'ın başında da tekrar etmesini sağlayarak retrieval sırasında ilgili bilginin en az bir chunk içinde bütün halde bulunmasını garanti eder.
+1000 karakterlik chunk boyutu, Türkçe dokümanlardaki ortalama bir paragrafın (birkaç cümlelik bir fikir birimi) tamamını tek bir chunk içinde tutacak kadar büyük, ama chunk içine alakasız birden fazla konuyu sıkıştırmayacak kadar da küçük tutulmuştur — bu da hem embedding modelinin tek bir chunk'ı anlamlı şekilde temsil edebilmesini, hem de yanıt üretimi sırasında modele gönderilen bağlamın gereksiz yere şişmemesini sağlar. 150 karakterlik overlap ise, bir cümlenin veya fikrin tam chunk sınırında bölünüp bağlamının iki parçaya dağılmasını engeller; bir chunk'ın sonunda yarım kalan bir bilginin bir sonraki chunk'ın başında da tekrar etmesini sağlayarak retrieval sırasında ilgili bilginin en az bir chunk içinde bütün halde bulunmasını garanti eder.
 
-**Neden yerel (lokal) embedding modeli?**
-`intfloat/multilingual-e5-small` modeli `sentence-transformers` ile yerel olarak (kendi makinede/container'da) çalıştırılıyor; bulut tabanlı bir embedding API'sine her chunk ve her sorgu için ayrı bir istek atmak yerine, model bir kez indirilip belleğe yükleniyor ve sonraki tüm `encode_passages`/`encode_query` çağrıları ek API maliyeti veya ağ gecikmesi olmadan çalışıyor. Bu, özellikle çok sayıda doküman ingest edilirken (yüzlerce chunk için embedding üretimi) önemli bir maliyet/gecikme avantajı sağlıyor. Ayrıca bu model çok dilli (multilingual) olarak eğitildiği için Türkçe metinlerde de iyi performans gösteriyor; sadece yanıt üretimi (generation) adımında, doğal dil anlama/üretme gerektiren kısımda Claude API'ye (ücretli, ağ üzerinden) başvuruluyor.
+**Neden yerel embedding modeli yerine Gemini embedding API'si?**
+Proje başlangıçta `intfloat/multilingual-e5-small` modelini `sentence-transformers` ile
+yerel olarak çalıştırıyordu: embedding başına API maliyeti ve ağ gecikmesi yoktu. Bu
+tercih dağıtımda kırıldı. Model, `torch` ve `transformers` ile birlikte açılışta belleğe
+yükleniyor ve süreç yaklaşık **1308 MB** RSS'e çıkıyordu; hedef ortam olan Render Free
+katmanının sınırı ise 512 MB. Ücretli bir instance'a geçmek bir seçenek değildi, bu
+yüzden embedding üretimi `gemini-embedding-001`'e taşındı (768 boyut, sorgu ve pasaj için
+ayrı `task_type`, L2 normalize, 32'lik gruplar hâlinde istek). Süreç böylece **116-148 MB**
+RSS'te çalışıyor: `torch`, `transformers` ve `sentence-transformers` üretim bağımlılıkları
+arasından tamamen çıktı ve istemci yalnızca ilk kullanımda, tembel olarak kuruluyor.
+Karşılığında her ingest ve her sorgu bir ağ isteği ödüyor; ücretsiz katmanın kota sınırına
+tabi olmak da bu değişimin bedeli. Üretim hedefi 512 MB olduğu sürece doğru takas bu
+yönde: barındırılamayan bir mimarinin ölçülebilir bir gecikme avantajı yoktur.
 
 **Neden RRF (Reciprocal Rank Fusion)?**
 Vektör aramasının döndürdüğü skorlar (cosine similarity, genelde 0-1 aralığında) ile BM25'in döndürdüğü skorlar (sınırsız, corpus'a ve terim frekansına bağlı, tamamen farklı bir ölçekte) doğrudan karşılaştırılamaz veya toplanamaz — hangi skorun "daha iyi" olduğunu belirlemek için ek bir normalizasyon adımı gerekirdi ve bu normalizasyon genellikle keyfi/kırılgan olur. RRF bu sorunu skorları tamamen görmezden gelerek çözer: her iki sonuç listesindeki chunk'ları yalnızca sıralarına (rank) göre değerlendirir ve `1 / (rank + k)` formülüyle bir puan verir (`hybrid.py`'deki `reciprocal_rank_fusion`, `k=rrf_k`). Böylece bir chunk her iki listede de üst sıralarda çıkıyorsa toplam puanı yükselir, listelerden yalnızca birinde çıkıyorsa da yine de makul bir puan alır — hiçbir skor ölçeğini diğerine göre normalize etmeye gerek kalmadan, adil ve basit bir birleştirme yapılmış olur.
@@ -221,7 +275,7 @@ Vektör aramasının döndürdüğü skorlar (cosine similarity, genelde 0-1 ara
 Kullanıcı sorusu → Agent → (karar) → RAG retrieval → gerekçeli cevap → Promptevals
 ```
 
-**RAG** (`src/rag_tr/`) retrieval sağlar: `RAGService.retrieve()` Claude çağırmadan tiplenmiş `Passage` listesi döndürür.
+**RAG** (`src/rag_tr/`) retrieval sağlar: `RAGService.retrieve()` hiçbir dil modeli çağırmadan tiplenmiş `Passage` listesi döndürür.
 
 **Agent** (`src/rag_tr/agent/`) bu retrieval'ı bir *tool* olarak kullanır. Sabit bir pipeline değil, açık bir karar döngüsüdür: arama gerekip gerekmediğine karar verir (gerekmiyorsa RAG'ı hiç çağırmaz), dönen pasajları denetler, gerekirse sorguyu yeniden formülleyip tekrar arar ve yeterli bağlam yoksa cevap üretmeyi reddeder. LLM sağlayıcısı `AgentLLM` arkasında soyutlanmıştır (`gemini.py`, Gemini free tier).
 
@@ -307,6 +361,23 @@ Gemini cevap üretimi → kaynaklar. Yanıt `answer`, `status`, `sources`, `step
 Korpus boşsa agent hiç çalıştırılmaz ve `409 corpus_empty` döner — boşa Gemini
 çağrısı yapılmaz ve istemci bunu bir sistem hatasıyla karıştırmaz.
 
+### Hata gövdesi — tek sözleşme
+
+Her hata, nereden geldiğine bakılmaksızın aynı şekli taşır:
+
+```json
+{"detail": {"code": "corpus_empty", "message": "Henüz doküman ingest edilmemiş."}}
+```
+
+Bu, uygulamanın kendi uç noktaları için zaten böyleydi; `api/errors.py` aynı şekli
+framework kaynaklı hatalara da uyguluyor. Doğrulama hataları (`422 invalid_request`)
+Pydantic'in alan listesi yerine tek bir cümleye indirgenir; bilinmeyen yol ve yöntem
+`404 not_found` / `405 method_not_allowed` döner; beklenmeyen bir istisna ise
+`500 internal_error` ve sabit bir mesaj döner — yığın izi, iç hata metni ve dosya yolu
+istemciye **hiçbir** durumda sızmaz, ayrıntı sunucu loglarında kalır. İstemci tarafı
+bu yüzden tek bir alana (`detail.code`) bakarak her duruma anlamlı bir mesaj
+gösterebiliyor.
+
 ### `POST /upload` — web kullanıcı yüklemesi
 
 `/ingest` ile karıştırılmamalı:
@@ -332,6 +403,11 @@ repodaki Next.js arayüzü. Tarayıcı **yalnızca** Next.js ile konuşur; model
 Tarayıcı → Next.js (Vercel) → /api/ask · /api/upload  →  FastAPI → Gemini
                                    (AGENT_API_URL, sunucu tarafı)
 ```
+
+Python servisinin Render yapılandırması depoda duruyor (`render.yaml`): Free plan,
+Docker runtime, `Dockerfile.api`, sağlık kontrolü `/health`. Dosyada hiçbir secret
+yok — `GEMINI_API_KEY` `sync: false` ile işaretli (değeri yalnızca Render panelinden
+girilir) ve `INGEST_API_TOKEN` `generateValue: true` ile Render tarafında üretilir.
 
 ### Başlatma
 
@@ -413,8 +489,8 @@ Vercel'de çalışır; ortam değişkenleri arayüz reposunun README'sinde liste
 ## Geliştirme Fikirleri
 
 - **Reranker modeli eklenmesi:** RRF ile birleştirilen ilk sonuçların üzerine, cross-encoder tabanlı bir reranker (örn. bir Türkçe/çok dilli cross-encoder modeli) uygulanarak `top_k_final` öncesi sonuçların isabet oranı artırılabilir.
-- **Streaming yanıt:** Claude API'nin streaming modu kullanılarak `/query` uç noktası token token yanıt döndürebilir, Streamlit arayüzü de yanıtı üretilirken gösterebilir (şu anda `generate_answer` tam yanıtı tek seferde bekliyor).
+- **Streaming yanıt:** Gemini API'nin streaming modu kullanılarak `/agent/ask` cevabı token token döndürebilir ve arayüz yanıtı üretilirken gösterebilir (şu anda `generate_answer` tam yanıtı tek seferde bekliyor).
 - **BM25 yeniden kurma maliyetinin azaltılması:** `BM25Index` bellekte yaşıyor ama artık restart sonrası kaybolmuyor: `RAGService.rebuild_keyword_index()` açılışta index'i ChromaDB'deki kalıcı chunk metinlerinden yeniden kuruyor (tek kaynak-of-truth vektör deposu, dolayısıyla iki depo arasında tutarsızlık oluşmuyor). Çok büyük corpus'larda bu yeniden kurma açılış süresini uzatabilir; o noktada tokenize edilmiş corpus'un diske cache'lenmesi düşünülebilir.
 - **Çoklu kullanıcı/oturum desteği:** Şu anda tüm kullanıcılar aynı `VectorStore`/`BM25Index`'i paylaşıyor; kullanıcı/oturum bazlı koleksiyon ayrımı (örn. Chroma'da kullanıcı başına ayrı koleksiyon) eklenerek farklı kullanıcıların dokümanları birbirinden izole edilebilir.
-- **Semantic caching:** Sık sorulan veya anlamsal olarak birbirine çok yakın sorular için, embedding benzerliğine dayalı bir önbellek eklenerek hem Claude API maliyeti hem de yanıt süresi azaltılabilir.
+- **Semantic caching:** Sık sorulan veya anlamsal olarak birbirine çok yakın sorular için, embedding benzerliğine dayalı bir önbellek eklenerek hem model çağrısı maliyeti hem de yanıt süresi azaltılabilir.
 - **Değerlendirme otomasyonu:** `eval/questions.json` içindeki soru-cevap çiftleri kullanılarak, `/query` uç noktasının ürettiği yanıtların beklenen yanıtlarla otomatik karşılaştırıldığı bir eval script'i (örn. cevap içinde beklenen anahtar bilgilerin geçip geçmediğini kontrol eden veya bir LLM-judge kullanan) yazılabilir; bu script CI'a bağlanarak regresyonlar erken yakalanabilir.

@@ -3,6 +3,8 @@
 Hicbir Gemini/Anthropic cagrisi yapilmaz, ag erisimi yoktur: servis fake'lenir.
 """
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -343,3 +345,58 @@ def test_anthropic_is_not_a_production_dependency():
     assert "anthropic" not in production_block, "anthropic uretim bagimliligi olmamali"
     assert "streamlit" not in production_block, "streamlit uretim bagimliligi olmamali"
     assert "sentence-transformers" not in production_block
+
+
+# --- embedding modeli yapilandirmasi acilista dogrulanir ---
+#
+# Gercek bir dagitim hatasindan geliyor: yerel `.env` dosyasi onceki surumden
+# kalan `EMBEDDING_MODEL_NAME=intfloat/multilingual-e5-small` degerini
+# tasiyordu. Uygulama sorunsuz aciliyor, `/health` "ok" donuyor ve modelin adini
+# oldugu gibi bildiriyordu; hata ancak ilk embedding cagrisinda, yani ilk
+# kullanici sorusunda ortaya cikiyordu. Yapilandirma hatasinin acilista
+# gorulmesi gerekir: boylece bozuk bir dagitim trafigi hic almaz.
+
+
+def test_settings_rejects_a_huggingface_embedding_model_name():
+    from pydantic import ValidationError
+
+    from rag_tr.config import Settings
+
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, embedding_model_name="intfloat/multilingual-e5-small")
+
+    message = str(excinfo.value)
+    assert "EMBEDDING_MODEL_NAME" in message
+    # Hata, ne yapilmasi gerektigini de soylemeli.
+    assert "gemini-embedding-001" in message
+
+
+def test_settings_rejects_an_empty_embedding_model_name():
+    from pydantic import ValidationError
+
+    from rag_tr.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, embedding_model_name="   ")
+
+
+def test_settings_accepts_a_gemini_embedding_model_name():
+    from rag_tr.config import Settings
+
+    settings = Settings(_env_file=None, embedding_model_name="gemini-embedding-001")
+
+    assert settings.embedding_model_name == "gemini-embedding-001"
+
+
+def test_env_example_declares_a_gemini_embedding_model():
+    """Ornek dosya, acilista dogrulamadan gecen bir deger onermeli."""
+    from rag_tr.config import Settings
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    text = (root / ".env.example").read_text(encoding="utf-8")
+    line = next(
+        row for row in text.splitlines() if row.startswith("EMBEDDING_MODEL_NAME=")
+    )
+    value = line.split("=", 1)[1].strip()
+
+    assert Settings(_env_file=None, embedding_model_name=value).embedding_model_name == value

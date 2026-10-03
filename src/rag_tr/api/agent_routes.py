@@ -5,6 +5,8 @@ degerleri oldugu gibi aktarilir. Bu modul yalnizca ceviri ve hata eslemesi
 yapar.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.genai import errors as genai_errors
@@ -20,6 +22,8 @@ from rag_tr.api.agent_schemas import (
 )
 from rag_tr.api.deps import get_agent, get_agent_factory
 from rag_tr.contracts import ErrorCode
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -90,6 +94,13 @@ async def ask(
         # embedding); mevcut /ingest ile ayni threadpool deseni kullanilir.
         result = await run_in_threadpool(agent.run, payload.question)
     except genai_errors.APIError as exc:
+        # Upstream hata metni ISTEMCIYE AKTARILMAZ. Gemini'nin 429 govdesi kota
+        # metrik adlarini, proje katmanini ve dokumantasyon baglantilarini
+        # tasiyan ~1200 karakterlik bir JSON; bunu kullaniciya gostermek hem
+        # okunamaz hem de gereksiz altyapi ayrintisi sizdirir. Ayrinti burada
+        # loglanir, istemci kisa ve sabit bir cumle alir.
+        logger.warning("Gemini API hatası (kod=%s): %s", getattr(exc, "code", None), exc)
+
         # Yalnizca 429 kota olarak etiketlenir; diger APIError'lar upstream
         # generation hatasidir ve kota gibi gosterilmez.
         if getattr(exc, "code", None) == _QUOTA_STATUS:
@@ -97,12 +108,17 @@ async def ask(
                 status_code=_QUOTA_STATUS,
                 detail=_error(
                     ErrorCode.QUOTA_EXHAUSTED,
-                    f"Gemini kotası tükendi, lütfen daha sonra tekrar deneyin: {exc}",
+                    "Model sağlayıcısının kullanım kotası şu an dolu. "
+                    "Kota yenilendiğinde sorgular yeniden çalışır.",
                 ),
             ) from exc
         raise HTTPException(
             status_code=502,
-            detail=_error(ErrorCode.GENERATION_ERROR, f"Gemini API hatası: {exc}"),
+            detail=_error(
+                ErrorCode.GENERATION_ERROR,
+                "Cevap üretme adımı başarısız oldu. Bu genellikle geçici bir "
+                "sorundur; tekrar denemek mantıklı.",
+            ),
         ) from exc
 
     # AgentStatus.TOOL_FAILURE bir istisna degil, agent'in kendi sonucudur:

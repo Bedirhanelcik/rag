@@ -1,0 +1,57 @@
+# Render blueprint -- Free plan icin.
+#
+# Sirlar burada TUTULMAZ: `sync: false` isaretli degiskenler Render panelinden
+# (veya secret olarak) girilir ve repoya hicbir zaman yazilmaz.
+#
+# Free planda kalici disk YOKTUR. Bu yuzden Chroma index'i container'in gecici
+# dosya sisteminde yasar ve her deploy/restart sonrasi sifirlanir; dokumanlarin
+# `scripts/ingest.py` ile yeniden ingest edilmesi gerekir (README'ye bkz.).
+services:
+  - type: web
+    name: rag-tr-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # --- Gemini: tek LLM + embedding saglayicisi ---
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_AGENT_MODEL
+        value: gemini-2.5-flash
+
+      # --- Embedding (yerel ML modeli yuklenmez) ---
+      - key: EMBEDDING_MODEL_NAME
+        value: gemini-embedding-001
+      - key: EMBEDDING_DIMENSIONS
+        value: "768"
+
+      # --- Retrieval ---
+      - key: CHROMA_PERSIST_DIR
+        value: /app/data/chroma
+      - key: CHUNK_SIZE
+        value: "1000"
+      - key: CHUNK_OVERLAP
+        value: "150"
+      - key: TOP_K_VECTOR
+        value: "10"
+      - key: TOP_K_KEYWORD
+        value: "10"
+      - key: TOP_K_FINAL
+        value: "5"
+      - key: RRF_K
+        value: "60"
+
+      # --- Ingest (operator ucu). Token olmadan uc nokta 503 doner. ---
+      - key: INGEST_API_TOKEN
+        generateValue: true
+
+      # --- Upload: korpus paylasimli oldugu icin dagitimda kapali ---
+      - key: UPLOAD_ENABLED
+        value: "false"
+      - key: UPLOAD_MAX_BYTES
+        value: "10485760"
+
+      # --- CORS: tarayici backend'e dogrudan konusmadigi icin bos ---
+      # - key: ALLOWED_ORIGINS
+      #   value: https://ornek.vercel.app

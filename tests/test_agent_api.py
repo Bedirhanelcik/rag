@@ -356,6 +356,58 @@ def test_other_gemini_api_errors_map_to_502_not_quota(monkeypatch):
     assert response.json()["detail"]["code"] == ErrorCode.GENERATION_ERROR.value
 
 
+# Gercek bir uretim gozleminden geliyor: kota dolduguna dair 429 yanitinin
+# `message` alani Gemini'nin ham hata govdesini oldugu gibi tasiyordu -- kota
+# metrik adlari, proje katmani, yeniden deneme suresi ve dokumantasyon
+# baglantilari dahil yaklasik 1200 karakter. Bu hem kullaniciya gosterilemeyecek
+# bir metin, hem de istemciye sizmasi gerekmeyen altyapi ayrintisi. Ayrinti
+# sunucu logunda kalmali; istemci kisa ve sabit bir cumle gormeli.
+
+_UPSTREAM_NOISE = (
+    "RESOURCE_EXHAUSTED {'error': {'code': 429, 'message': 'You exceeded your current "
+    "quota', 'details': [{'quotaMetric': 'generativelanguage.googleapis.com/"
+    "generate_content_free_tier_requests', 'quotaValue': '20'}]}} "
+    "https://ai.google.dev/gemini-api/docs/rate-limits"
+)
+
+
+class _NoisyGeminiError(_FakeGeminiError):
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self._noise = _UPSTREAM_NOISE
+
+    def __str__(self) -> str:  # pragma: no cover - mesaj icerigi test ediliyor
+        return f"{self.code} {self._noise}"
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [(429, 429), (500, 502)],
+)
+def test_upstream_error_text_is_not_forwarded_to_the_client(code, status, monkeypatch):
+    local = _client_with_error(_NoisyGeminiError(code), monkeypatch)
+
+    response = local.post("/agent/ask", json={"question": "soru"})
+
+    assert response.status_code == status
+    message = response.json()["detail"]["message"]
+    for leak in ("RESOURCE_EXHAUSTED", "quotaMetric", "https://", "generativelanguage"):
+        assert leak not in message, f"upstream ayrinti sizdi: {leak}"
+    assert len(message) <= 200
+    # Mesaj yine de kullaniciya ne oldugunu soylemeli.
+    assert message.strip()
+
+
+def test_upstream_error_detail_is_written_to_the_server_log(monkeypatch, caplog):
+    """Ayrinti kaybolmamali: istemciden gizlenir, logda tutulur."""
+    local = _client_with_error(_NoisyGeminiError(429), monkeypatch)
+
+    with caplog.at_level("WARNING", logger="rag_tr.api.agent_routes"):
+        local.post("/agent/ask", json={"question": "soru"})
+
+    assert any("RESOURCE_EXHAUSTED" in record.getMessage() for record in caplog.records)
+
+
 def test_unrelated_errors_are_not_labelled_as_quota(monkeypatch):
     """Alakasiz bir hata kota hatasi gibi gosterilmemeli."""
     local = _client_with_error(RuntimeError("beklenmeyen"), monkeypatch)

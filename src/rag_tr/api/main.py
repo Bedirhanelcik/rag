@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from rag_tr.api.agent_routes import router as agent_router
+from rag_tr.api.errors import register_error_handlers
 from rag_tr.api.routes import router
 from rag_tr.api.upload_routes import router as upload_router
 from rag_tr.config import Settings
@@ -54,6 +55,7 @@ def create_app(service: RAGService | None = None, agent=None) -> FastAPI:
     app = FastAPI(title="Türkçe RAG API")
     app.state.service = service if service is not None else build_service()
     _configure_cors(app)
+    register_error_handlers(app)
     app.state.agent = agent
     app.state.agent_factory = None
     app.include_router(router)
