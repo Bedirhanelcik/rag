@@ -322,7 +322,7 @@ def test_tool_failure_is_not_retried():
     tool = ScriptedSearchTool([_failed(), _found(_passage())])
     agent = ResearchAgent(llm=llm, search_tool=tool, max_searches=3)
 
-    result = ResearchAgent(llm=llm, search_tool=tool, max_searches=3).run("Soru?")
+    result = agent.run("Soru?")
 
     assert len(result.tool_calls) == 1
     assert result.status is AgentStatus.TOOL_FAILURE
