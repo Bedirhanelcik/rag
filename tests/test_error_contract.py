@@ -132,11 +132,14 @@ def test_wrong_method_uses_the_shared_shape():
     [
         (lambda c: c.post("/agent/ask", json={"question": "s"}), 409, ErrorCode.CORPUS_EMPTY),
         (lambda c: c.post("/ingest", files={"files": ("a.txt", b"x")}), 401, ErrorCode.UNAUTHORIZED),
+        # Yazma uclarinin hepsi ayni kapidan geciyor: token yoksa 401.
         (
             lambda c: c.post("/upload", files={"files": ("a.txt", b"x")}),
-            403,
-            ErrorCode.UPLOAD_DISABLED,
+            401,
+            ErrorCode.UNAUTHORIZED,
         ),
+        (lambda c: c.delete("/documents/a.txt"), 401, ErrorCode.UNAUTHORIZED),
+        (lambda c: c.post("/documents/reset"), 401, ErrorCode.UNAUTHORIZED),
         (
             lambda c: c.post(
                 "/ingest", files={"files": ("k.exe", b"MZ")}, headers=HEADERS
@@ -169,3 +172,23 @@ def test_unhandled_exception_leaks_nothing():
     text = response.text
     for leak in ("Traceback", "chroma down", "secret", "abc123", "rag_tr", ".py"):
         assert leak not in text, f"sizinti: {leak}"
+
+
+# --- sozlesme ile belge arasindaki tutarlilik ---------------------------------
+
+
+def test_every_error_code_is_documented_in_the_readme():
+    """Her `ErrorCode` README'deki sozlesme tablosunda gecmeli.
+
+    Bu kontrol, kod ile belgenin birbirinden ayri dusmesini yakaliyor: yazma
+    uclarinin yetkilendirmesi degistiginde README bir sure eski tasarimi
+    anlatmaya devam etmisti. Sozlesmeyi makineyle okunabilir tutma hedefi,
+    belgenin de dogru kalmasini gerektiriyor.
+    """
+    from pathlib import Path
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+
+    missing = [code.value for code in ErrorCode if f"`{code.value}`" not in readme]
+
+    assert missing == [], f"README'de belgelenmemiş hata kodları: {missing}"

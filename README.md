@@ -156,7 +156,8 @@ ek paketine bağlı ve üretim yolunun parçası değil.
 Web arayüzü ayrı bir depoda duruyor (`agent-lab-web`, Next.js). `AGENT_API_URL` bu API'yi
 gösterecek şekilde ayarlandığında Playground sayfasındaki soru alanı `/agent/ask`'e gider
 ve cevabı, agent'ın karar izini, yaptığı tool çağrılarını ve dayandığı pasajları birlikte
-gösterir. Yükleme paneli yalnızca sunucuda `UPLOAD_ENABLED=true` ise etkindir.
+gösterir. Yükleme ve silme panelleri sunucu tarafında `INGEST_API_TOKEN` ile çağrılır;
+arayüz silme düğmelerini `/documents` yanıtındaki `can_modify` alanına bakarak gösterir.
 
 Bu depodaki `ui/streamlit_app.py` eski arayüzdür; `uv sync --extra legacy` ile kurulabilir
 ama üretim yolunun parçası değildir.
@@ -242,6 +243,16 @@ Hata durumlarında HTTP gövdesi `{"detail": {"code": ..., "message": ...}}` şe
 | 500 | `retrieval_error` | Embedding/vektör deposu/keyword index tarafında hata — yeniden denemek genelde yardımcı olmaz. |
 | 400 | `invalid_filename` | Dosya adı boş, `.` veya `..`. |
 | 400 | `unsupported_file_type` | Uzantı `.pdf`/`.txt`/`.md` dışında. |
+| 401 | `unauthorized` | Yazma ucu çağrıldı ama `Authorization: Bearer <token>` eksik/yanlış. |
+| 403 | `upload_disabled` | Yetki tamam ama bu ortamda `UPLOAD_ENABLED=false` (yalnızca `/upload`). |
+| 404 | `document_not_found` | Silinmek istenen doküman korpusta yok. |
+| 409 | `corpus_empty` | Hiç doküman ingest edilmemiş; önce ingest gerekiyor. |
+| 413 | `file_too_large` | Dosya `UPLOAD_MAX_BYTES` sınırını aşıyor. |
+| 429 | `quota_exhausted` | Model sağlayıcısının kotası tükendi — "bozuk sistem" değil, bekleyip yeniden denenmeli. |
+| 503 | `ingest_disabled` | Sunucuda `INGEST_API_TOKEN` hiç tanımlı değil; yazma uçları kapalı. |
+| 503 | `agent_unavailable` | Agent kurulamadı (örn. `GEMINI_API_KEY` yok); RAG uçları çalışmaya devam eder. |
+| 400 | `invalid_request` | Framework doğrulaması (`api/errors.py` aynı gövdeye çevirir). |
+| 404 | `not_found` · 405 `method_not_allowed` · 500 `internal_error` · `http_error` | Framework kaynaklı hatalar da aynı `{"detail":{"code","message"}}` gövdesini kullanır. |
 | 422 | — | Pydantic doğrulama hatası (örn. boş `question`, `top_k=0`). `top_k` verilecekse en az 1 olmalıdır; 0 artık sessizce varsayılana düşmez. |
 
 ## Tasarım Kararları
@@ -304,8 +315,55 @@ Testler tamamen fake LLM/RAG bileşenleriyle çalışır; normal test koşusu hi
 
 ## API
 
-Dört uç nokta var. Üretimde web arayüzü yalnızca `/agent/ask` ve `/health`
-kullanır; `/ingest` operatör ucudur, `/upload` ise dağıtımda kapalıdır.
+Sekiz uç nokta var. Üretimde web arayüzü yalnızca `/agent/ask`, `/health` ve
+`/documents` uçlarını tarayıcıdan kullanır; korpusu değiştiren uçlar sunucu
+tarafından, token ile çağrılır.
+
+### Yetkilendirme kuralı (tek cümle)
+
+**Korpusu DEĞİŞTİREN her uç nokta `INGEST_API_TOKEN` ister; OKUYAN hiçbiri
+istemez.** Kural tek bir yerde durur: `src/rag_tr/api/auth.py`.
+
+| Uç nokta | Korpusu değiştirir mi | Token |
+|---|---|---|
+| `GET /health` | hayır | gerekmez |
+| `GET /documents` | hayır | gerekmez |
+| `POST /agent/ask` | hayır (yalnızca cevap üretir) | gerekmez |
+| `POST /query` (legacy) | hayır | gerekmez |
+| `POST /ingest` | **evet** | **gerekir** |
+| `POST /upload` | **evet** | **gerekir** (+ `UPLOAD_ENABLED`) |
+| `DELETE /documents/{ad}` | **evet** | **gerekir** |
+| `POST /documents/reset` | **evet** | **gerekir** |
+
+Yazma uçlarının hata sözleşmesi aynıdır:
+
+| Durum | HTTP | `code` |
+|---|---|---|
+| Sunucuda `INGEST_API_TOKEN` hiç tanımlı değil | `503` | `ingest_disabled` |
+| Başlık eksik, `Bearer` değil veya token yanlış | `401` | `unauthorized` |
+| (yalnızca `/upload`) yetki tamam ama `UPLOAD_ENABLED=false` | `403` | `upload_disabled` |
+
+Sıra önemlidir: yetki **önce** kontrol edilir. Token'ı olmayan bir çağıran her
+durumda `401` görür ve dağıtımın `UPLOAD_ENABLED` değerini öğrenemez.
+Karşılaştırma `secrets.compare_digest` ile yapılır (zamanlama sızıntısına
+kapalı). Token tarayıcıya hiç ulaşmaz: Next.js arayüzü bu uçları kendi sunucusu
+üzerinden çağırır ve başlığı orada ekler.
+
+#### Swagger UI'dan yazma uçlarını denemek (`/docs`)
+
+Yetki kontrolü `Authorization` başlığını elle okuduğu için FastAPI bunu kendi
+başına keşfedemez; bu yüzden güvenlik şeması OpenAPI belgesine açıkça
+yazılıyor (`api/openapi.py`). Pratik sonucu: `/docs` sayfasında bir
+**"Authorize"** düğmesi çıkar.
+
+1. `/docs` adresini açın ve sağ üstteki **Authorize**'a basın.
+2. `INGEST_API_TOKEN` değerini yapıştırın (Render → servis → Environment).
+3. Artık `/upload`, `/ingest`, `DELETE /documents/{ad}` ve `/documents/reset`
+   uçları Swagger üzerinden denenebilir; token'ı olmayan uçlar `401` döner.
+
+Bu şema yalnızca **belgeyi** etkiler — doğrulamayı yine `api/auth.py` yapar.
+Düğme olmadan yazma uçlarına `/docs` üzerinden token gönderilemiyordu, yani
+hepsi kaçınılmaz olarak `401` dönüyordu.
 
 ### `GET /health`
 
@@ -408,14 +466,29 @@ gösterebiliyor.
 
 | | `/ingest` | `/upload` |
 |---|---|---|
-Kim kullanır | operatör / admin | web arayüzü kullanıcısı |
-Koruma | `INGEST_API_TOKEN` (Bearer) | `UPLOAD_ENABLED` bayrağı |
-Varsayılan | kapalı (token yok → 503) | kapalı (`false` → 403) |
+Kim kullanır | operatör / admin | web arayüzü (sunucu tarafı) |
+Yetki | `INGEST_API_TOKEN` (Bearer) | `INGEST_API_TOKEN` (Bearer) — **aynı** |
+Ek koşul | yok | `UPLOAD_ENABLED=true` |
 Yanıt | toplam `chunk_count` | dosya başına `chunks_created` + `corpus_chunks` |
 
-`UPLOAD_ENABLED=false` iken `/upload` 403 döner ve ingestion'a hiç ulaşmaz.
-Dağıtımda kapalı kalmalıdır: korpus tüm ziyaretçiler arasında paylaşımlıdır,
-kullanıcı bazlı izolasyon yoktur.
+İkisi **aynı yetki kapısından** geçer; fark, `/upload`'un dosya başına sonuç
+döndürmesi, boyut sınırı uygulaması ve ek olarak bir ortam anahtarına bakmasıdır.
+
+**`UPLOAD_ENABLED` bir yetki mekanizması DEĞİLDİR** — yetkiyi token yapar. Bu
+bayrak bir ortam anahtarıdır: `false` iken geçerli token'la bile `403
+upload_disabled` döner ve ingestion'a hiç ulaşılmaz. Varlık sebebi, korpus tüm
+ziyaretçiler arasında paylaşımlı olduğu (kullanıcı bazlı izolasyon yok) için bir
+dağıtımı token'ı iptal etmeye gerek kalmadan geçici olarak salt okunur
+yapabilmektir — örneğin bir sunum sırasında korpusun sabit kalması gerektiğinde.
+Silme ve sıfırlama bu bayrağa bakmaz; onlar yalnızca token ister.
+
+> **Tasarım notu — neden değişti.** Daha önce `/upload` ve doküman silme
+> *yalnızca* `UPLOAD_ENABLED`'a bakıyordu, yani bayrak açık olduğu anda o uçlara
+> **kim olursa olsun** yazabiliyordu: yetki ile ortam yeteneği aynı bayrakta
+> karışmıştı ve `/ingest` ile `/upload` iki ayrı kapı, iki ayrı hata kodu
+> kullanıyordu. Artık yetki tek bir yerde (`api/auth.py`) ve tüm yazma uçlarında
+> aynıdır; bayrak ise yalnızca kendi işini yapar. Yeni bir kimlik doğrulama
+> sistemi eklenmedi — aynı token, aynı başlık biçimi, aynı hata kodları.
 
 ### `GET /documents` · `DELETE /documents/{ad}` · `POST /documents/reset`
 
@@ -424,22 +497,29 @@ Korpus yönetimi. Arayüzdeki doküman alanı bu üç ucu kullanır.
 ```bash
 curl -s localhost:8000/documents
 # {"documents":[{"source_file":"osmanli_tarihi.md","chunk_count":1}, ...],
-#  "total_chunks":4,"keyword_index_size":4,"can_modify":true}
+#  "total_chunks":4,"keyword_index_size":4,"can_modify":false}
 
-curl -X DELETE localhost:8000/documents/osmanli_tarihi.md
-curl -X POST   localhost:8000/documents/reset
+curl -X DELETE localhost:8000/documents/osmanli_tarihi.md \
+  -H "Authorization: Bearer $INGEST_API_TOKEN"
+curl -X POST   localhost:8000/documents/reset \
+  -H "Authorization: Bearer $INGEST_API_TOKEN"
 ```
 
 **Listeleme herkese açıktır** — yalnızca dosya adları ve chunk sayıları döner,
-içerik dönmez ve hiçbir şey değiştirmez. **Silme ve sıfırlama `UPLOAD_ENABLED`
-bayrağına bağlıdır**: korpus ziyaretçiler arasında paylaşımlı olduğu için
-"yükleyebilen silebilir" kuralı uygulanır. `INGEST_API_TOKEN` bu uçlara hiç
-girmez; o token yalnızca operatör ucu `/ingest`e aittir ve tarayıcıya ulaşmaz.
+içerik dönmez ve hiçbir şey değiştirmez. **Silme ve sıfırlama `INGEST_API_TOKEN`
+ister** (yazma uçlarının tümüyle aynı kural); `UPLOAD_ENABLED` bu iki uca hiç
+girmez.
+
+`can_modify` alanı, arayüzün var olmayan bir eylemi sunmaması için döndürülür ve
+**isteğe göre** hesaplanır: sunucunun token'ı olup olmadığına değil, *bu isteğin*
+geçerli bir token taşıyıp taşımadığına bakar. Aksi halde token tanımlı bir
+dağıtımda anonim bir tarayıcıya da `can_modify: true` denir, kullanıcıya silme
+düğmesi gösterilir ve düğme `401` ile dönerdi. Yani alan her zaman silmenin
+gerçekte ne yapacağıyla aynı cevabı verir.
 
 Silme HER İKİ indeksi birden günceller. Yalnızca Chroma'dan silmek, kullanıcı
 dokümanı kaldırdığını sanarken anahtar kelime aramasının onu döndürmeye devam
-etmesi demek olurdu; `can_modify` alanı da arayüzün var olmayan bir eylemi
-sunmaması için döndürülür.
+etmesi demek olurdu.
 
 ## Dağıtım (deployment)
 
@@ -507,8 +587,8 @@ kullanılamaz** ve kod kalıcı disk varmış gibi davranmaz.
 | `EMBEDDING_MODEL_NAME` | hayır | `gemini-embedding-001` | Gemini modeli olmalı; HF adı verilirse net hata |
 | `EMBEDDING_DIMENSIONS` | hayır | `768` | |
 | `CHROMA_PERSIST_DIR` | hayır | `data/chroma` | Free'de kalıcı değil (yukarı bkz.) |
-| `INGEST_API_TOKEN` | **ingest için evet** | boş → kapalı | Güçlü rastgele değer; repoda tutulmaz |
-| `UPLOAD_ENABLED` | hayır | `false` | Dağıtımda kapalı kalmalı |
+| `INGEST_API_TOKEN` | **tüm yazma uçları için evet** | boş → yazma kapalı (503) | Güçlü rastgele değer; repoda tutulmaz. `render.yaml`'da `generateValue: true` |
+| `UPLOAD_ENABLED` | hayır | `false` | Yalnızca `/upload` için ortam anahtarı — **yetki değil**. `false` iken geçerli token'la bile 403 |
 | `UPLOAD_MAX_BYTES` | hayır | `10485760` | |
 | `ALLOWED_ORIGINS` | hayır | boş | Boşsa CORS middleware eklenmez |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_*`, `RRF_K` | hayır | kodda | Ayarlama |

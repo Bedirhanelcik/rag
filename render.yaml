@@ -42,13 +42,20 @@ services:
       - key: RRF_K
         value: "60"
 
-      # --- Ingest (operator ucu). Token olmadan uc nokta 503 doner. ---
+      # --- Yazma yetkisi. Korpusu degistiren TUM uclar (/upload, /ingest,
+      #     dokuman silme ve sifirlama) bu token'i ister. Deger Render
+      #     tarafinda uretilir ve panelden okunur; repoya hic yazilmaz.
+      #     Token olmadan yazma uclari 503, yanlis token'la 401 doner. ---
       - key: INGEST_API_TOKEN
         generateValue: true
 
-      # --- Upload: korpus paylasimli oldugu icin dagitimda kapali ---
+      # --- `/upload` ortam anahtari -- YETKI DEGIL (onu token yapar). "true"
+      #     ise uc nokta gecerli token'la calisir; "false" yapilirsa gecerli
+      #     token'la bile 403 upload_disabled doner ve dagitim salt okunur olur
+      #     (token iptal etmeye gerek kalmadan, ornegin sunum sirasinda).
+      #     Silme/sifirlama bu bayraga bakmaz, yalnizca token ister. ---
       - key: UPLOAD_ENABLED
-        value: "false"
+        value: "true"
       - key: UPLOAD_MAX_BYTES
         value: "10485760"
 

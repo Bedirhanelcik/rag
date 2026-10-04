@@ -197,14 +197,18 @@ def test_a_document_removed_from_the_corpus_is_no_longer_retrievable(service, tm
 # --- HTTP katmani -------------------------------------------------------------
 
 
+WRITE_TOKEN = "test-write-token"
+WRITE_HEADERS = {"Authorization": f"Bearer {WRITE_TOKEN}"}
+
+
 class _StubSettings:
     embedding_model_name = "fake-embed-model"
     top_k_final = 5
-    ingest_api_token = None
     allowed_origins = ""
+    upload_enabled = True
 
-    def __init__(self, upload_enabled: bool) -> None:
-        self.upload_enabled = upload_enabled
+    def __init__(self, token: str | None) -> None:
+        self.ingest_api_token = token
         self.upload_max_bytes = 1024
 
 
@@ -225,10 +229,10 @@ class _StubBM25:
 
 
 class _StubService:
-    def __init__(self, *, upload_enabled: bool = True, documents=None) -> None:
+    def __init__(self, *, token: str | None = WRITE_TOKEN, documents=None) -> None:
         from rag_tr.service import DocumentSummary
 
-        self.settings = _StubSettings(upload_enabled)
+        self.settings = _StubSettings(token)
         self._documents = documents if documents is not None else [
             DocumentSummary(source_file="tarih.md", chunk_count=3),
             DocumentSummary(source_file="cografya.md", chunk_count=2),
@@ -265,13 +269,17 @@ def client(tmp_path, monkeypatch):
 
     def build(**kwargs):
         service = _StubService(**kwargs)
-        return TestClient(create_app(service=service)), service
+        # Yazma uclari token ister; okuma testleri de ayni istemciyi
+        # kullaniyor cunku listeleme basligi yok sayar.
+        client = TestClient(create_app(service=service), headers=WRITE_HEADERS)
+        return client, service
 
     return build
 
 
 def test_listing_is_available_without_any_token(client):
-    local, _ = client()
+    service = _StubService()
+    local = TestClient(create_app(service=service))
 
     response = local.get("/documents")
 
@@ -280,18 +288,66 @@ def test_listing_is_available_without_any_token(client):
     assert [d["source_file"] for d in body["documents"]] == ["tarih.md", "cografya.md"]
     assert body["total_chunks"] == 5
     assert body["keyword_index_size"] == 5
-    assert body["can_modify"] is True
 
 
-def test_listing_reports_a_read_only_corpus_when_upload_is_disabled(client):
-    local, _ = client(upload_enabled=False)
+def test_listing_reports_a_read_only_corpus_when_no_token_is_configured(client):
+    local, _ = client(token=None)
 
     body = local.get("/documents").json()
 
     assert body["can_modify"] is False, "arayüz silme düğmesi göstermemeli"
 
 
-def test_a_document_can_be_removed_when_upload_is_enabled(client):
+# --- can_modify: ISTEGE gore hesaplanir, sunucu yapilandirmasina gore degil ---
+
+
+def test_can_modify_is_false_for_a_caller_without_a_token(client):
+    """Sunucuda token TANIMLI ama cagiran onu sunmuyor.
+
+    Bu alan sunucunun token'i olup olmadigini degil, cagiranin gercekten
+    silebilecegini bildirmeli. Aksi halde dagitimda anonim bir tarayiciya
+    silme dugmesi gosterilir ve dugme 401 ile donerdi."""
+    service = _StubService()  # token tanimli
+    local = TestClient(create_app(service=service))
+
+    body = local.get("/documents").json()
+
+    assert body["can_modify"] is False
+
+
+def test_can_modify_is_true_for_a_caller_with_a_valid_token(client):
+    local, _ = client()  # istemci WRITE_HEADERS tasiyor
+
+    body = local.get("/documents").json()
+
+    assert body["can_modify"] is True
+
+
+def test_can_modify_is_false_for_a_caller_with_a_wrong_token(client):
+    service = _StubService()
+    local = TestClient(
+        create_app(service=service), headers={"Authorization": "Bearer yanlis"}
+    )
+
+    body = local.get("/documents").json()
+
+    assert body["can_modify"] is False
+
+
+def test_can_modify_agrees_with_what_deletion_actually_does(client):
+    """Alan ile davranis birbirini tutmali: iki istemci, iki sonuc."""
+    service = _StubService()
+    anonymous = TestClient(create_app(service=service))
+    authorised = TestClient(create_app(service=service), headers=WRITE_HEADERS)
+
+    assert anonymous.get("/documents").json()["can_modify"] is False
+    assert anonymous.delete("/documents/tarih.md").status_code == 401
+
+    assert authorised.get("/documents").json()["can_modify"] is True
+    assert authorised.delete("/documents/tarih.md").status_code == 200
+
+
+def test_a_document_can_be_removed_with_a_valid_token(client):
     local, service = client()
 
     response = local.delete("/documents/tarih.md")
@@ -301,14 +357,25 @@ def test_a_document_can_be_removed_when_upload_is_enabled(client):
     assert service.removed == ["tarih.md"]
 
 
-def test_removing_is_refused_when_upload_is_disabled(client):
-    local, service = client(upload_enabled=False)
+def test_removing_without_a_token_is_refused(client):
+    service = _StubService()
+    local = TestClient(create_app(service=service))
 
     response = local.delete("/documents/tarih.md")
 
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == ErrorCode.UPLOAD_DISABLED.value
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == ErrorCode.UNAUTHORIZED.value
     assert service.removed == [], "yetki yokken servise hiç dokunulmamalı"
+
+
+def test_removing_is_closed_when_no_token_is_configured(client):
+    local, service = client(token=None)
+
+    response = local.delete("/documents/tarih.md")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == ErrorCode.INGEST_DISABLED.value
+    assert service.removed == []
 
 
 def test_removing_an_unknown_document_is_a_404_with_its_own_code(client):
@@ -339,13 +406,14 @@ def test_resetting_empties_the_corpus(client):
     assert service.reset_called is True
 
 
-def test_resetting_is_refused_when_upload_is_disabled(client):
-    local, service = client(upload_enabled=False)
+def test_resetting_without_a_token_is_refused(client):
+    service = _StubService()
+    local = TestClient(create_app(service=service))
 
     response = local.post("/documents/reset")
 
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == ErrorCode.UPLOAD_DISABLED.value
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == ErrorCode.UNAUTHORIZED.value
     assert service.reset_called is False
 
 
@@ -369,13 +437,13 @@ def test_reset_clears_the_upload_directory(client, tmp_path):
     assert list((tmp_path / "uploads").glob("*")) == []
 
 
-def test_the_ingest_token_is_never_required_or_exposed_here(client):
-    """Bu uc noktalar operator token'ina bagli DEGIL; tarayici onu hic görmez."""
+def test_the_token_value_is_never_echoed_back(client):
+    """Yanitlar token'i ya da adini tasimamali."""
     local, _ = client()
 
     listing = local.get("/documents")
     removal = local.delete("/documents/tarih.md")
 
     for response in (listing, removal):
+        assert WRITE_TOKEN not in response.text
         assert "INGEST_API_TOKEN" not in response.text
-        assert "token" not in response.text.lower()

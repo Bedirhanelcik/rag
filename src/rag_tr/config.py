@@ -27,13 +27,16 @@ class Settings(BaseSettings):
     top_k_keyword: int = 10
     top_k_final: int = 5
     rrf_k: int = 60
-    # Upload varsayilan olarak KAPALI: mevcut Chroma koleksiyonu tum ziyaretciler
-    # arasinda paylasimli, yani kullanici izolasyonu yok. Yerel gelistirmede
-    # UPLOAD_ENABLED=true ile acilir; dagitimda kapali kalmali.
+    # `/upload` icin ORTAM anahtari -- yetki degil. Varsayilan KAPALI: mevcut
+    # Chroma koleksiyonu tum ziyaretciler arasinda paylasimli, yani kullanici
+    # izolasyonu yok. Kapaliyken gecerli token'la bile 403 doner; boylece bir
+    # dagitim token iptal etmeden salt okunur yapilabilir. Yetkilendirmeyi bu
+    # bayrak YAPMAZ, onu `ingest_api_token` yapar.
     upload_enabled: bool = False
-    # /ingest operator ucudur ve varsayilan olarak KAPALIDIR: token tanimli
-    # degilse uc nokta hizmet vermez. Boylece yapilandirilmamis bir dagitimda
-    # korpusa herkes yazamaz.
+    # YETKI: korpusu degistiren TUM uclar (/ingest, /upload, dokuman silme ve
+    # sifirlama) bu token'i ister. Tanimli degilse yazma uclari hic hizmet
+    # vermez (503). Boylece yapilandirilmamis bir dagitimda korpusa kimse
+    # yazamaz. Ayrinti: `rag_tr.api.auth`.
     ingest_api_token: str | None = None
     upload_max_bytes: int = 10 * 1024 * 1024
     # Virgulle ayrilmis frontend origin listesi. Bos birakilirsa CORS

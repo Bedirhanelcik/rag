@@ -5,19 +5,18 @@ gormek, bir dokumani kaldirmak ve korpusu bosaltmak.
 
 Yetkilendirme notu: listeleme HERKESE aciktir -- yalnizca dosya adlarini ve
 chunk sayilarini gosterir, icerik dondurmez ve hicbir sey degistirmez. Silme ve
-sifirlama ise YIKICIDIR ve korpus tum ziyaretciler arasinda paylasimli
-oldugundan `UPLOAD_ENABLED` bayragina baglidir: yukleme kapaliyken bir
-ziyaretcinin baskasinin dokumanini silebilmesi mumkun olmamali. Boylece
-"yukleyebilen silebilir" kurali tek bir bayrakla ifade ediliyor.
+sifirlama ise korpusu DEGISTIRIR ve `INGEST_API_TOKEN` ile korunur; kontrol
+`api.auth` icinde, `/upload` ve `/ingest` ile ayni yerde.
 
-`INGEST_API_TOKEN` buraya hic girmez: o token operator uc noktasi `/ingest`e
-aittir ve tarayiciya asla ulasmaz.
+Token tarayiciya asla ulasmaz: web arayuzu bu uclari kendi sunucusu uzerinden
+cagirir ve basligi orada ekler.
 """
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from rag_tr.api import routes
+from rag_tr.api.auth import has_write_access, require_write_token
 from rag_tr.api.document_schemas import (
     CorpusResetResponse,
     DocumentItem,
@@ -27,18 +26,6 @@ from rag_tr.api.document_schemas import (
 from rag_tr.contracts import ErrorCode
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
-
-def _require_upload_enabled(settings) -> None:
-    if not settings.upload_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail=routes._error(
-                ErrorCode.UPLOAD_DISABLED,
-                "Korpus bu ortamda salt okunur. Doküman ekleme ve silme yalnızca "
-                "UPLOAD_ENABLED=true olan ortamlarda açıktır.",
-            ),
-        )
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -54,15 +41,17 @@ async def list_documents(request: Request) -> DocumentListResponse:
         total_chunks=service.vector_store.count(),
         keyword_index_size=service.bm25_index.size(),
         # Arayuz, silme dugmelerini gosterip gostermeyecegine buna bakarak
-        # karar verir; kapali bir ortamda var olmayan bir eylemi sunmaz.
-        can_modify=bool(service.settings.upload_enabled),
+        # karar verir. Olcut sunucunun token'i olmasi DEGIL, bu istegin gecerli
+        # bir token tasimasi: aksi halde anonim bir tarayiciya silme dugmesi
+        # gosterilir ve dugme 401 ile donerdi.
+        can_modify=has_write_access(request, service.settings),
     )
 
 
 @router.delete("/{source_file}", response_model=DocumentRemovedResponse)
 async def remove_document(source_file: str, request: Request) -> DocumentRemovedResponse:
     service = request.app.state.service
-    _require_upload_enabled(service.settings)
+    require_write_token(request, service.settings)
 
     # Ad sanitizasyonu yukleme yoluyla ayni fonksiyondan geliyor: yol bileseni
     # tasiyan bir ad burada da kabul edilmez.
@@ -95,7 +84,7 @@ async def remove_document(source_file: str, request: Request) -> DocumentRemoved
 @router.post("/reset", response_model=CorpusResetResponse)
 async def reset_corpus(request: Request) -> CorpusResetResponse:
     service = request.app.state.service
-    _require_upload_enabled(service.settings)
+    require_write_token(request, service.settings)
 
     removed = await run_in_threadpool(service.reset_corpus)
 

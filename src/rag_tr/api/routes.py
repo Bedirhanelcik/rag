@@ -1,9 +1,9 @@
-import secrets
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
+from rag_tr.api.auth import require_write_token
 from rag_tr.api.schemas import (
     HealthResponse,
     IngestResponse,
@@ -38,33 +38,8 @@ def _safe_filename(raw: str | None) -> str:
     return name
 
 
-def _require_ingest_token(request: Request, settings) -> None:
-    """/ingest operator ucudur ve varsayilan olarak KAPALIDIR.
-
-    `INGEST_API_TOKEN` tanimli degilse uc nokta hic hizmet vermez: boylece
-    yapilandirilmamis bir dagitimda korpusa herkes yazamaz. Token tanimliysa
-    `Authorization: Bearer <token>` basligi beklenir ve karsilastirma zamanlama
-    sizintisina kapali yapilir."""
-    expected = getattr(settings, "ingest_api_token", None)
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail=_error(
-                ErrorCode.INGEST_DISABLED,
-                "Ingest uç noktası kapalı. Sunucu tarafında INGEST_API_TOKEN tanımlayın.",
-            ),
-        )
-
-    header = request.headers.get("authorization", "")
-    scheme, _, supplied = header.partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(supplied.strip(), expected):
-        raise HTTPException(
-            status_code=401,
-            detail=_error(
-                ErrorCode.UNAUTHORIZED,
-                "Geçersiz veya eksik ingest token'ı.",
-            ),
-        )
+# Yetki kontrolu `api.auth` icinde: ayni kural /upload ve dokuman silme
+# uclarinda da gecerli oldugu icin tek bir yerde duruyor.
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -72,7 +47,7 @@ async def ingest(
     request: Request, files: list[UploadFile] = File(...)
 ) -> IngestResponse:
     service = request.app.state.service
-    _require_ingest_token(request, service.settings)
+    require_write_token(request, service.settings)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     saved_paths = []

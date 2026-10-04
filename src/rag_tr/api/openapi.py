@@ -15,10 +15,17 @@ degistirmiyor (ucu de olculdu), cunku sema Pydantic tarafindan uretiliyor.
 Bu yuzden duzeltme belgenin kendisinde yapiliyor: uretilen sema bir kez
 gezilip ikili (binary) alanlar `format: "binary"` olarak yeniden yaziliyor.
 
+Ikinci is: yazma uclarinin Bearer token istedigini belgede DUYURMAK. Yetki
+kontrolu `api.auth` icinde basligi elle okudugu icin FastAPI bunu kendi
+basina kesfedemiyordu; sonucta Swagger UI'da "Authorize" dugmesi hic
+cikmiyor ve `/docs` uzerinden token gonderilemiyordu -- yani dagitilmis
+arayuzden `/upload`, `/ingest`, silme ve sifirlama uclari denenemiyordu
+(hepsi 401 donuyordu, token verebilecek bir alan yoktu).
+
 ONEMLI: bu YALNIZCA dokumantasyon ciktisini etkiler. Uc noktalarin calisma
 zamani davranisi, dogrulamasi ve yanitlari aynen kalir -- `/upload` ve
 `/ingest` zaten gercek `UploadFile` aliyordu, yalnizca Swagger onlari yanlis
-gosteriyordu.
+gosteriyordu; yetki kontrolu de zaten vardi, yalnizca belgede yazmiyordu.
 """
 
 from typing import Any
@@ -28,6 +35,22 @@ from fastapi.openapi.utils import get_openapi
 
 #: Pydantic'in ikili alanlar icin yazdigi isaret.
 _BINARY_MEDIA_TYPE = "application/octet-stream"
+
+#: Belgede tanimlanan guvenlik semasinin adi; Swagger UI "Authorize"
+#: penceresinde bu adi gosterir.
+_SECURITY_SCHEME = "BearerToken"
+
+#: Token isteyen uc noktalar: (HTTP yontemi, yol). `api.auth.require_write_token`
+#: cagiran her uc burada olmali. Tek kaynak olarak duruyor ki belge ile gercek
+#: davranis ayri dusmesin; `tests/test_openapi_schema.py` ikisini karsilastirir.
+PROTECTED_OPERATIONS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("post", "/ingest"),
+        ("post", "/upload"),
+        ("delete", "/documents/{source_file}"),
+        ("post", "/documents/reset"),
+    }
+)
 
 
 def _normalise_binary_fields(node: Any) -> None:
@@ -43,6 +66,29 @@ def _normalise_binary_fields(node: Any) -> None:
             _normalise_binary_fields(item)
 
 
+def _declare_write_token_scheme(schema: dict) -> None:
+    """Yazma uclarini Bearer token isteyen islemler olarak isaretler.
+
+    Sema YALNIZCA belgelenir; dogrulamayi yine `api.auth` yapar. Guvenlik
+    islem bazinda ekleniyor, genel (global) olarak degil: okuma uclari token
+    istemiyor ve Swagger'in onlara da baslik eklemesi yanlis bilgi verirdi.
+    """
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})[_SECURITY_SCHEME] = {
+        "type": "http",
+        "scheme": "bearer",
+        "description": (
+            "Korpusu değiştiren uç noktalar için `INGEST_API_TOKEN`. "
+            "Sunucuda token tanımlı değilse bu uçlar 503 döner."
+        ),
+    }
+
+    for path, operations in schema.get("paths", {}).items():
+        for method, operation in operations.items():
+            if (method.lower(), path) in PROTECTED_OPERATIONS:
+                operation["security"] = [{_SECURITY_SCHEME: []}]
+
+
 def build_openapi(app: FastAPI) -> dict:
     """`app.openapi()` yerine gecer. Sonuc bir kez uretilip onbellege alinir."""
     if app.openapi_schema is not None:
@@ -56,5 +102,6 @@ def build_openapi(app: FastAPI) -> dict:
         routes=app.routes,
     )
     _normalise_binary_fields(schema)
+    _declare_write_token_scheme(schema)
     app.openapi_schema = schema
     return schema

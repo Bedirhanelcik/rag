@@ -79,6 +79,19 @@ def upload_dir(tmp_path, monkeypatch) -> Path:
 
 
 def _client(service: StubService) -> TestClient:
+    """Yetkili istemci.
+
+    Token basligi varsayilan olarak ekleniyor: bu dosyadaki testlerin konusu
+    yetkilendirme degil, yukleme davranisi (tur, boyut, ad sanitizasyonu).
+    Yetki kontrolu kendi testlerinde ayrica sinanir."""
+    return TestClient(
+        create_app(service=service),
+        raise_server_exceptions=False,
+        headers=INGEST_HEADERS,
+    )
+
+
+def _anonymous_client(service: StubService) -> TestClient:
     return TestClient(create_app(service=service), raise_server_exceptions=False)
 
 
@@ -206,15 +219,75 @@ def test_path_components_are_stripped(upload_dir, filename):
 # --- feature flag ---
 
 
-def test_upload_disabled_returns_403_and_never_ingests(upload_dir):
+def test_upload_without_a_token_is_rejected_and_never_ingests(upload_dir):
+    """Yetkisiz istek ingestion'a hic ulasmamali."""
+    service = StubService()
+
+    response = _anonymous_client(service).post(
+        "/upload", files={"files": ("notlar.txt", b"veri")}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == ErrorCode.UNAUTHORIZED.value
+    assert service.calls == [], "yetki yokken ingestion çağrılmamalı"
+    assert list(upload_dir.glob("*")) == [] if upload_dir.exists() else True
+
+
+def test_upload_with_a_wrong_token_is_rejected(upload_dir):
+    service = StubService()
+    client = TestClient(
+        create_app(service=service),
+        raise_server_exceptions=False,
+        headers={"Authorization": "Bearer yanlis-token"},
+    )
+
+    response = client.post("/upload", files={"files": ("notlar.txt", b"veri")})
+
+    assert response.status_code == 401
+    assert service.calls == []
+
+
+def test_upload_is_closed_when_no_token_is_configured(upload_dir):
+    """Token hic tanimli degilse uc nokta hizmet vermez."""
+    service = StubService()
+    service.settings.ingest_api_token = None
+
+    response = _client(service).post("/upload", files={"files": ("notlar.txt", b"veri")})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == ErrorCode.INGEST_DISABLED.value
+    assert service.calls == []
+
+
+def test_upload_disabled_returns_403_even_with_a_valid_token(upload_dir):
+    """`UPLOAD_ENABLED=false` yetkiden BAGIMSIZ bir ortam anahtaridir.
+
+    Gecerli token'la bile yukleme yapilamaz; boylece paylasimli bir dagitim
+    token iptal etmeye gerek kalmadan salt okunur yapilabilir."""
     service = StubService(upload_enabled=False)
 
-    response = _client(service).post("/upload", files={"files": ("a.txt", b"veri")})
+    response = _client(service).post("/upload", files={"files": ("notlar.txt", b"veri")})
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == ErrorCode.UPLOAD_DISABLED.value
-    assert service.calls == []
+    assert service.calls == [], "bayrak kapaliyken ingestion çağrılmamalı"
     assert not upload_dir.exists() or list(upload_dir.iterdir()) == []
+
+
+def test_authorization_is_checked_before_the_upload_flag(upload_dir):
+    """Yetkisiz cagiran, dagitimin bayrak durumunu ogrenmemeli: her hâlde 401.
+
+    Bayrak kontrolu once yapilsaydi anonim bir istek 403 alir ve bu, token'i
+    olmayan birine ortam yapilandirmasi hakkinda bilgi verirdi."""
+    service = StubService(upload_enabled=False)
+
+    response = _anonymous_client(service).post(
+        "/upload", files={"files": ("notlar.txt", b"veri")}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == ErrorCode.UNAUTHORIZED.value
+    assert service.calls == []
 
 
 def test_upload_is_disabled_by_default_in_settings():

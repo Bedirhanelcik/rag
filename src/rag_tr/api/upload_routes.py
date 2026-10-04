@@ -5,11 +5,14 @@ dosya adi sanitizasyonu (`_safe_filename`) ve yukleme dizini mevcut route
 modulunden, chunk'lama/embedding/indeksleme ise `RAGService.ingest_files`'tan
 oldugu gibi kullanilir. Bu uc noktanin `/ingest`e ekledigi uc sey var:
 
-  1. `UPLOAD_ENABLED` bayragi -- varsayilan KAPALI. Mevcut Chroma koleksiyonu
-     tum ziyaretciler arasinda paylasimli oldugundan (kullanici izolasyonu bu
-     fazin kapsaminda degil) dagitimda upload acik birakilmamali.
-  2. Dosya boyutu siniri.
-  3. Dosya basina sonuc: filename + chunks_created + status.
+  1. Yetki: korpusu degistiren bir uc oldugu icin `INGEST_API_TOKEN` ile
+     korunuyor (`api.auth`). Token tanimli degilse uc nokta hic hizmet
+     vermez; yapilandirilmamis bir dagitimda korpusa kimse yazamaz.
+  2. `UPLOAD_ENABLED` bayragi: yetkiden BAGIMSIZ bir ortam anahtari. Kapaliysa
+     gecerli token'la bile `403 upload_disabled` doner, boylece paylasimli bir
+     dagitim token iptal etmeden salt okunur yapilabilir.
+  3. Dosya boyutu siniri.
+  4. Dosya basina sonuc: filename + chunks_created + status.
 """
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -19,6 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 # uzerinden referans veriliyor (isimle degil): yukleme dizini tek bir yerde
 # tanimli kaliyor ve testte tek noktadan degistirilebiliyor.
 from rag_tr.api import routes
+from rag_tr.api.auth import require_write_token
 from rag_tr.api.upload_schemas import UploadedFile, UploadResponse
 from rag_tr.contracts import ErrorCode
 
@@ -42,13 +46,21 @@ async def upload(
     service = request.app.state.service
     settings = service.settings
 
+    # 1) YETKI: korpusu degistiren bir uc, `INGEST_API_TOKEN` ister.
+    require_write_token(request, settings)
+
+    # 2) ORTAM YETENEGI: yetki ayri, "bu dagitimda web yuklemesi acik mi" ayri
+    #    bir soru. Paylasimli korpuslu bir dagitimi (ornegin bir sunum
+    #    sirasinda) token'i iptal etmeden salt okunur yapabilmek icin duruyor.
+    #    Token'dan SONRA bakiliyor: yetkisiz bir cagiran dagitimin
+    #    yapilandirmasini ogrenmesin, her durumda 401 gorsun.
     if not settings.upload_enabled:
         raise HTTPException(
             status_code=403,
             detail=routes._error(
                 ErrorCode.UPLOAD_DISABLED,
                 "Doküman yükleme bu ortamda kapalı. Korpus ziyaretçiler arasında "
-                "paylaşımlı olduğu için yükleme yalnızca yerel geliştirmede açılır.",
+                "paylaşımlı olduğu için yükleme UPLOAD_ENABLED=true gerektirir.",
             ),
         )
 

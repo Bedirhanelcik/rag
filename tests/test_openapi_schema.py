@@ -128,17 +128,119 @@ def test_upload_still_rejects_an_empty_file_list(tmp_path, monkeypatch):
 
     monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
 
-    settings = Settings(_env_file=None, upload_enabled=True)
+    settings = Settings(_env_file=None, upload_enabled=True, ingest_api_token="t")
 
     class _Service(_StubService):
         def __init__(self) -> None:
             super().__init__()
             self.settings = settings
 
-    client = TestClient(create_app(service=_Service()))
+    client = TestClient(
+        create_app(service=_Service()), headers={"Authorization": "Bearer t"}
+    )
 
     # Dosya alani zorunlu: hic dosya gonderilmeyen istek dogrulamaya takilir.
     response = client.post("/upload")
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "invalid_request"
+
+
+# --- yazma uclarinin yetki semasi ---------------------------------------------
+#
+# Ayri bir gercek hatadan geliyor: yetki kontrolu `Authorization` basligini elle
+# okudugu icin FastAPI bunu kesfedemiyor, belgede guvenlik semasi yazmiyor ve
+# Swagger UI'da "Authorize" dugmesi cikmiyordu. Sonuc: `/docs` uzerinden token
+# gonderilemiyor, yazma uclarinin hepsi 401 doneyordu ve dagitilmis arayuzden
+# denenemiyorlardi.
+
+
+def test_the_bearer_scheme_is_declared(spec):
+    """Swagger UI'nin "Authorize" dugmesini cizmesi icin gereken sema."""
+    schemes = spec["components"]["securitySchemes"]
+
+    assert "BearerToken" in schemes
+    assert schemes["BearerToken"]["type"] == "http"
+    assert schemes["BearerToken"]["scheme"] == "bearer"
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    sorted(
+        [
+            ("post", "/ingest"),
+            ("post", "/upload"),
+            ("delete", "/documents/{source_file}"),
+            ("post", "/documents/reset"),
+        ]
+    ),
+)
+def test_every_write_endpoint_requires_the_bearer_scheme(spec, method, path):
+    operation = spec["paths"][path][method]
+
+    assert operation.get("security") == [{"BearerToken": []}], (
+        f"{method.upper()} {path} belgede token istemiyor görünüyor"
+    )
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    sorted([("get", "/health"), ("get", "/documents"), ("post", "/agent/ask")]),
+)
+def test_read_endpoints_declare_no_security(spec, method, path):
+    """Okuma uclari token istemiyor; Swagger onlara baslik eklememeli."""
+    assert "security" not in spec["paths"][path][method]
+
+
+def test_every_operation_documented_as_protected_is_really_enforced(tmp_path, monkeypatch):
+    """Belge ile davranis ayni olmali -- sabit listeyi degil, GERCEGI olcer.
+
+    Belgede token isteyen her islem, token olmadan cagrildiginda gercekten
+    reddedilmeli. Aksi halde Swagger kullanicisina korumali gorunen ama
+    aslinda korumasiz bir uc nokta gosterilirdi. Istekler semadan uretiliyor:
+    listeyi listeyle karsilastirmak dairesel olurdu.
+    """
+    from rag_tr.api import routes
+
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")
+
+    class _TokenService(_StubService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.settings = Settings(_env_file=None, ingest_api_token="bir-token")
+
+        def ingest_files(self, saved_paths):  # pragma: no cover - cagrilmamali
+            raise AssertionError("yetkisiz istek ingestion'a ulaşmamalı")
+
+        def remove_document(self, name):  # pragma: no cover - cagrilmamali
+            raise AssertionError("yetkisiz istek silmeye ulaşmamalı")
+
+        def reset_corpus(self):  # pragma: no cover - cagrilmamali
+            raise AssertionError("yetkisiz istek sıfırlamaya ulaşmamalı")
+
+    app = create_app(service=_TokenService())
+    client = TestClient(app)
+    spec = app.openapi()
+
+    protected = [
+        (method.lower(), path)
+        for path, operations in spec["paths"].items()
+        for method, operation in operations.items()
+        if "security" in operation
+    ]
+    assert protected, "en az bir korumalı işlem belgelenmiş olmalı"
+
+    for method, path in protected:
+        # Yol parametresi varsa somut bir degerle doldurulur.
+        url = path.replace("{source_file}", "ornek.md")
+        kwargs = {}
+        if method == "post" and path in {"/upload", "/ingest"}:
+            kwargs["files"] = {"files": ("a.txt", b"veri")}
+
+        response = client.request(method.upper(), url, **kwargs)
+
+        assert response.status_code == 401, (
+            f"{method.upper()} {path} belgede korumalı ama token olmadan "
+            f"{response.status_code} döndü"
+        )
+        assert response.json()["detail"]["code"] == "unauthorized"
