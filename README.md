@@ -569,6 +569,42 @@ spin-down** sonrası kaybolur; `/health` yeniden `chunk_count=0` gösterir.
 > **Gereklilik:** Render Free'de her deploy sonrası `/ingest` çağrısını tekrar
 > çalıştırmanız gerekir. Örnek korpus için bu tek bir komut ve birkaç saniyedir.
 
+#### Canlı servisi gösterime hazırlama
+
+Çalışan dağıtım: **https://rag-5txb.onrender.com** (`/docs`, `/health`).
+
+Servis boştayken uykuya geçtiği ve uyandığında dosya sistemi sıfırlandığı için
+korpusu **gösterimden hemen önce** yüklemek gerekir — erken yüklenen korpus bir
+sonraki spin-down'da kaybolur:
+
+```bash
+# 1. Servisi uyandır ve korpusun boş olduğunu gör
+curl -s https://rag-5txb.onrender.com/health
+# {"status":"ok",...,"chunk_count":0}   <- 0 ise ingest gerekiyor
+
+# 2. Örnek korpusu yükle (token Render panelinden: Environment -> INGEST_API_TOKEN)
+RAG_API_URL=https://rag-5txb.onrender.com \
+INGEST_API_TOKEN=<token> \
+  uv run --no-editable python scripts/ingest.py data/sample
+
+# 3. Doğrula: chunk_count > 0 olmalı
+curl -s https://rag-5txb.onrender.com/health
+curl -s https://rag-5txb.onrender.com/documents
+
+# 4. Bir soru sor
+curl -s -X POST https://rag-5txb.onrender.com/agent/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Türkiye'"'"'nin başkenti neresidir?"}'
+```
+
+`chunk_count=0` iken `/agent/ask` **`409 corpus_empty`** döner — bu doğru
+davranıştır (uydurma cevap üretmez), ama gösterimde soru sorulamaz. Adım 2
+atlanırsa demo bu hatayla karşılaşır.
+
+Gemini ücretsiz katmanı günlük kotalıdır; kota tükenmişse `/agent/ask`
+**`429 quota_exhausted`** döner. Bu da doğru davranıştır, fakat gösterimden önce
+kotanın yenilenmiş olduğundan emin olun.
+
 Bu bilinçli bir tasarım kararıdır: açılışta otomatik ingest **eklenmedi**, çünkü
 bu hem startup'ı uzatır hem de açılışta Gemini çağrısı yapmak anlamına gelir
 (health check'in anahtar gerektirmemesi ilkesini bozar).
