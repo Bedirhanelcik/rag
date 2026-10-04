@@ -90,3 +90,20 @@ def fake_embedding_model() -> FakeEmbeddingModel:
 @pytest.fixture
 def fake_client() -> FakeAnthropicClient:
     return FakeAnthropicClient()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_upload_dir(tmp_path, monkeypatch):
+    """Hicbir test projenin GERCEK `data/uploads` dizinine yazmasin.
+
+    `/ingest` ve `/upload` gelen dosyayi once `routes.UPLOAD_DIR` altina
+    yaziyor. Testlerin cogu bu yolu kendi `tmp_path`ine ceviriyordu ama
+    hepsi degil: `test_error_contract.py` ve `test_production_config.py`
+    gecerli token'la `/ingest` cagirdiginda `data/uploads/a.txt` calisma
+    agacinda kaliyordu. Artik varsayilan izolasyon: her test kendi gecici
+    dizinine yazar, testi ayrica monkeypatch'leyen dosyalar da calismaya
+    devam eder (onlarin degeri bunun uzerine yazilir).
+    """
+    from rag_tr.api import routes
+
+    monkeypatch.setattr(routes, "UPLOAD_DIR", tmp_path / "uploads")

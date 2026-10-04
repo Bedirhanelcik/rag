@@ -400,3 +400,21 @@ def test_env_example_declares_a_gemini_embedding_model():
     value = line.split("=", 1)[1].strip()
 
     assert Settings(_env_file=None, embedding_model_name=value).embedding_model_name == value
+
+
+# --- test hijyeni ---
+
+
+def test_tests_never_write_to_the_real_upload_directory(tmp_path):
+    """`conftest` izolasyonunun gercekten yururlukte oldugunu dogrular.
+
+    Bu kontrol olmadan bir test, projenin calisma agacindaki `data/uploads`
+    dizinine dosya birakabilir; daha once tam olarak bu oluyordu."""
+    from pathlib import Path
+
+    from rag_tr.api import routes
+
+    assert routes.UPLOAD_DIR != Path("data/uploads"), (
+        "testler gerçek yükleme dizinine yazmamalı"
+    )
+    assert str(tmp_path) in str(routes.UPLOAD_DIR)
